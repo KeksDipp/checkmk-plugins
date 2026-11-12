@@ -26,3 +26,19 @@ jobs:
 
       - name: Byte-compile all plugins
         run: python -m compileall -q plugins
+
+      # Agent plugins are shipped twice: in the plugin family's agents/ folder (2.5 GUI download,
+      # future bakery v2) and below local/share/check_mk/agents/ (bakery v1).
+      - name: Agent plugin copies are identical
+        run: |
+          rc=0
+          for f in plugins/*/local/lib/python3/cmk_addons/plugins/*/agents/*; do
+            [ -f "$f" ] || continue
+            name=$(basename "$f")
+            plugin_root=${f%%/local/*}
+            other=$(find "$plugin_root/local/share/check_mk/agents" -name "$name" 2>/dev/null | head -1)
+            if [ -n "$other" ] && ! cmp -s "$f" "$other"; then
+              echo "::error file=$f::differs from $other"; rc=1
+            fi
+          done
+          exit $rc

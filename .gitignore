@@ -17,3 +17,12 @@ build/
 .idea/
 *.swp
 .DS_Store
+
+# AI assistant files (never publish)
+CLAUDE.md
+CLAUDE.local.md
+.claude/
+
+# Local test helpers (not published)
+tests/
+plugins/*/tests/

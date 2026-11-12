@@ -1,0 +1,15 @@
+title: Windows Update Tracker: Failed installations
+agents: windows
+catalog: os/misc
+license: GPLv2
+distribution: https://github.com/KeksDipp/checkmk-plugins
+description:
+ Shows failed Windows update installations of the last 30 days
+ (default: {WARN}).
+
+ The service goes back to {OK} when the update was installed successfully
+ later or is no longer offered (e.g. replaced by a newer update).
+ Installations still in progress are not counted.
+
+discovery:
+ One service is created if the agent plugin output is present.

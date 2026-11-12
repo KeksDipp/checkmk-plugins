@@ -1,0 +1,12 @@
+title: Windows Update Tracker: Pending reboot
+agents: windows
+catalog: os/misc
+license: GPLv2
+distribution: https://github.com/KeksDipp/checkmk-plugins
+description:
+ Shows whether Windows needs a reboot to finish installing updates, and
+ since when. Default: {WARN} after 1 day, {CRIT} after 3 days.
+ With "No levels" the service always stays {OK}.
+
+discovery:
+ One service is created if the agent plugin output is present.
