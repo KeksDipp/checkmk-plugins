@@ -1,0 +1,19 @@
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+.ruff_cache/
+.mypy_cache/
+.pytest_cache/
+
+# Build artifacts (MKPs are attached to GitHub Releases, not committed)
+*.mkp
+dist/
+build/
+
+# Editors / OS
+.vscode/
+.idea/
+*.swp
+.DS_Store
