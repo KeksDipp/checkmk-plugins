@@ -62,42 +62,60 @@ def _classification_choice(title: str, help_text: str, prefill: list[str]) -> Mu
     )
 
 
+_FILTERS = [
+    ("defender_platform", "Microsoft Defender platform update (KB4052623)"),
+    ("msrt", "Malicious Software Removal Tool (KB890830)"),
+    ("optional", "Optional updates (not auto-selected by Windows Update)"),
+] + [(f"class_{n}", f"Classification: {t}") for n, t in _CLASSIFICATIONS]
+
+DEFAULT_FILTERS = ["msrt", "optional", "class_definition"]
+
+
 def _filter_elements() -> dict[str, DictElement]:
     return {
-        "ignore_defender": DictElement(
-            parameter_form=BooleanChoice(
-                title=Title("Microsoft Defender updates"),
-                label=Label("Ignore Defender updates (KB2267602, KB4052623)"),
-                prefill=DefaultValue(True),
-            ),
-        ),
-        "ignore_msrt": DictElement(
-            parameter_form=BooleanChoice(
-                title=Title("Malicious Software Removal Tool"),
-                label=Label("Ignore MSRT (KB890830)"),
-                prefill=DefaultValue(True),
-            ),
-        ),
-        "ignore_optional": DictElement(
-            parameter_form=BooleanChoice(
-                title=Title("Optional updates"),
-                label=Label("Ignore optional updates (not auto-selected by Windows Update)"),
+        "filters": DictElement(
+            parameter_form=MultipleChoice(
+                title=Title("Filtered updates"),
                 help_text=Help(
-                    "Optional updates (e.g. most drivers) are only installed when selected "
-                    "manually under Windows Update > Advanced options > Optional updates."
+                    "Selected updates are not counted and never change the state. They are "
+                    "listed in the details under 'Filtered updates' with the reason."
                 ),
-                prefill=DefaultValue(True),
+                elements=[MultipleChoiceElement(name=n, title=Title(t)) for n, t in _FILTERS],
+                prefill=DefaultValue(DEFAULT_FILTERS),
             ),
         ),
         "ignore_title_regexes": DictElement(
             parameter_form=List(
-                title=Title("Ignore updates by title or KB (regex)"),
+                title=Title("Filtered updates by title or KB (regex)"),
                 help_text=Help("Not case-sensitive."),
                 element_template=RegularExpression(predefined_help_text=MatchingScope.INFIX),
                 add_element_label=Label("Add pattern"),
             ),
         ),
     }
+
+
+_OLD_FILTER_KEYS = ("ignore_classifications", "ignore_defender", "ignore_msrt", "ignore_optional")
+
+
+def _migrate_pending(value: object) -> dict:
+    """1.0.0-beta.1 to beta.3 stored the filters as separate options."""
+    if not isinstance(value, dict):
+        raise TypeError(value)
+    if not any(k in value for k in _OLD_FILTER_KEYS):
+        return value
+    new = {k: v for k, v in value.items() if k not in _OLD_FILTER_KEYS}
+    if "filters" not in value:
+        classes = list(value.get("ignore_classifications", ["definition"]))
+        if value.get("ignore_defender", True) and "definition" not in classes:
+            classes.append("definition")
+        filters = [
+            name
+            for name, key in (("msrt", "ignore_msrt"), ("optional", "ignore_optional"))
+            if value.get(key, True)
+        ]
+        new["filters"] = filters + [f"class_{c}" for c in classes]
+    return new
 
 
 def _age_levels(title: str, warn_days: float, crit_days: float) -> SimpleLevels[float]:
@@ -192,6 +210,7 @@ def _age_rule() -> Dictionary:
 def _form_pending() -> Dictionary:
     return Dictionary(
         title=Title("Windows Updates pending"),
+        migrate=_migrate_pending,
         elements={
             "age_rules": DictElement(
                 parameter_form=List(
@@ -214,13 +233,6 @@ def _form_pending() -> Dictionary:
                             required=True,
                         ),
                     },
-                ),
-            ),
-            "ignore_classifications": DictElement(
-                parameter_form=_classification_choice(
-                    "Ignore these classifications",
-                    "Ignored updates are only listed in the details, they never alert.",
-                    ["definition"],
                 ),
             ),
             **_filter_elements(),

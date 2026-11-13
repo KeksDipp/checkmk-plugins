@@ -1,5 +1,10 @@
 # Changelog – windows_update_tracker
 
+## 1.0.0-beta.4 – 2026-11-13
+
+- All filters in one list *Filtered updates*. Existing rules are migrated.
+- The Defender platform update (KB4052623) is no longer filtered by default (can be selected)
+
 ## 1.0.0-beta.3 – 2026-11-13
 
 - Optional updates (not auto-selected by Windows Update, e.g. most drivers) are ignored by

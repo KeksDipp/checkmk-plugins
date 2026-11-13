@@ -24,8 +24,9 @@ KB5070001 - 2026-11 Cumulative Update for Windows 11 ... (Security Updates, Crit
 - **Age rules** set other limits for certain updates (by classification, severity, title or
   KB). The first matching rule wins. Age counts from *first seen on this host* or from the
   *Microsoft release date*.
-- **Ignored by default:** definition updates (Defender), MSRT and optional updates (not auto-selected by
-  Windows Update, e.g. most drivers). More can be added. Ignored updates are listed in the details.
+- **Filtered by default:** definition updates (Defender signatures), MSRT and optional updates (not
+  auto-selected by Windows Update, e.g. most drivers). Classifications, the Defender platform update
+  and title/KB patterns can be added. Filtered updates are listed in the details with the reason.
 - WARN if the update search fails or is older than 2 days (CRIT after 7 days).
 
 ### Windows Update reboot

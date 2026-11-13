@@ -49,11 +49,7 @@ CLASSIFICATION_TITLES = {
     "other": "Other",
 }
 
-DEFENDER_REGEXES = [
-    r"Security Intelligence",  # Defender definition updates
-    r"\bKB2267602\b",
-    r"\bKB4052623\b",  # Defender platform update
-]
+DEFENDER_PLATFORM_REGEXES = [r"\bKB4052623\b", r"antimalware platform"]
 MSRT_REGEXES = [r"\bKB890830\b", r"Malicious Software Removal Tool"]
 
 
@@ -183,17 +179,39 @@ def _matches_any(update: Update, regexes: Iterable[str]) -> bool:
     return any(re.search(rx, text, re.IGNORECASE) for rx in regexes if rx)
 
 
-def _filter_reason(update: Update, params: Mapping[str, Any]) -> str | None:
-    """Why an update is ignored (first matching filter), or None if it counts."""
-    if params.get("ignore_defender", True) and _matches_any(update, DEFENDER_REGEXES):
-        return "Defender"
-    if params.get("ignore_msrt", True) and _matches_any(update, MSRT_REGEXES):
+DEFAULT_FILTERS = ["msrt", "optional", "class_definition"]
+
+
+def _filters(params: Mapping[str, Any]) -> set[str]:
+    """Selected filters; also reads the separate options of 1.0.0-beta.1 to beta.3
+    (only rules that were not migrated by the GUI yet contain these keys)."""
+    if not any(
+        k in params
+        for k in ("ignore_classifications", "ignore_defender", "ignore_msrt", "ignore_optional")
+    ):
+        return set(params.get("filters", DEFAULT_FILTERS))
+    classes = set(params.get("ignore_classifications", ["definition"]))
+    if params.get("ignore_defender", True):
+        classes.add("definition")
+    result = {f"class_{c}" for c in classes}
+    if params.get("ignore_msrt", True):
+        result.add("msrt")
+    if params.get("ignore_optional", True):
+        result.add("optional")
+    return result
+
+
+def _filter_reason(update: Update, filters: set[str], regexes: Iterable[str]) -> str | None:
+    """Why an update is filtered (first matching filter), or None if it counts."""
+    if "defender_platform" in filters and _matches_any(update, DEFENDER_PLATFORM_REGEXES):
+        return "Defender platform"
+    if "msrt" in filters and _matches_any(update, MSRT_REGEXES):
         return "MSRT"
-    if params.get("ignore_optional", True) and update.optional:
+    if "optional" in filters and update.optional:
         return "optional"
-    if update.classification in set(params.get("ignore_classifications", ["definition"])):
+    if f"class_{update.classification}" in filters:
         return "classification"
-    if _matches_any(update, params.get("ignore_title_regexes", [])):
+    if _matches_any(update, regexes):
         return "title/KB pattern"
     return None
 
@@ -281,6 +299,8 @@ def check_windows_update_tracker(params: Mapping[str, Any], section: Section) ->
         )
 
     # --- evaluate updates ----------------------------------------------------------
+    filters = _filters(params)
+    regexes = params.get("ignore_title_regexes", [])
     age_rules = params.get("age_rules", [])
     default_rule = params.get("default_rule", {})
 
@@ -289,7 +309,7 @@ def check_windows_update_tracker(params: Mapping[str, Any], section: Section) ->
     oldest_age: float | None = None
 
     for upd in section.pending:
-        if reason := _filter_reason(upd, params):
+        if reason := _filter_reason(upd, filters, regexes):
             filtered.append((upd, reason))
             continue
         rule = next((r for r in age_rules if _rule_matches(r, upd)), default_rule)
@@ -377,10 +397,7 @@ check_plugin_windows_update_tracker = CheckPlugin(
             "levels": ("fixed", (2 * DAY, 7 * DAY)),
         },
         "age_rules": [],
-        "ignore_classifications": ["definition"],
-        "ignore_defender": True,
-        "ignore_msrt": True,
-        "ignore_optional": True,
+        "filters": DEFAULT_FILTERS,
         "ignore_title_regexes": [],
         "search_age": ("fixed", (2 * DAY, 7 * DAY)),
         "search_error_state": 1,
