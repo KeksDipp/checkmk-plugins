@@ -371,7 +371,7 @@ check_plugin_windows_update_tracker = CheckPlugin(
     check_default_parameters={
         "default_rule": {
             "age_basis": "first_seen",
-            "levels": ("fixed", (14 * DAY, 30 * DAY)),
+            "levels": ("fixed", (2 * DAY, 7 * DAY)),
         },
         "age_rules": [],
         "ignore_classifications": ["definition"],

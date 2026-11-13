@@ -199,7 +199,7 @@ def _form_pending() -> Dictionary:
                     elements={
                         "age_basis": DictElement(parameter_form=_age_basis(), required=True),
                         "levels": DictElement(
-                            parameter_form=_age_levels("Max. age", 14, 30),
+                            parameter_form=_age_levels("Max. age", 2, 7),
                             required=True,
                         ),
                     },

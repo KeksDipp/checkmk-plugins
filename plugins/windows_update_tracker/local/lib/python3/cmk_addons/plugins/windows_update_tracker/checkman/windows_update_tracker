@@ -7,8 +7,8 @@ description:
  Lists every pending Windows update with KB number, title, classification,
  severity and age. Needs the agent plugin {windows_update_tracker.ps1}.
 
- Each update is checked against age limits (default: {WARN} after 14 days,
- {CRIT} after 30 days). Age rules can set other limits for certain updates,
+ Each update is checked against age limits (default: {WARN} after 2 days,
+ {CRIT} after 7 days). Age rules can set other limits for certain updates,
  e.g. security updates. The age counts from "first seen on this host" or from
  the Microsoft release date.
 

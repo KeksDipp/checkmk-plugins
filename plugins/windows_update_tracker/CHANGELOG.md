@@ -1,5 +1,10 @@
 # Changelog – windows_update_tracker
 
+## 1.0.0-beta.2 – 2026-11-13
+
+- Default age limits for pending updates: WARN after 2 days, CRIT after 7 days
+  (was 14 / 30 days)
+
 ## 1.0.0-beta.1 – 2026-11-13
 
 - First beta release

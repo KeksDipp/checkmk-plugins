@@ -20,7 +20,7 @@ KB5070001 - 2026-11 Cumulative Update for Windows 11 ... (Security Updates, Crit
           - seen 10 days, published 12 days ago [published, Security 7/14] (!)
 ```
 
-- Default: WARN after 14 days, CRIT after 30 days.
+- Default: WARN after 2 days, CRIT after 7 days.
 - **Age rules** set other limits for certain updates (by classification, severity, title or
   KB). The first matching rule wins. Age counts from *first seen on this host* or from the
   *Microsoft release date*.
