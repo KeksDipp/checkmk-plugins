@@ -12,7 +12,7 @@ description:
  e.g. security updates. The age counts from "first seen on this host" or from
  the Microsoft release date.
 
- Defender and MSRT updates are ignored by default.
+ Defender, MSRT and optional updates are ignored by default.
 
  The service also goes {WARN} if the update search fails or is older than
  2 days ({CRIT} after 7 days).

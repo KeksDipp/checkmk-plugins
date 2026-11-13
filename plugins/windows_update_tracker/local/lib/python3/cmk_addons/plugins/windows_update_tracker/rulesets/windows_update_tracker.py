@@ -78,6 +78,17 @@ def _filter_elements() -> dict[str, DictElement]:
                 prefill=DefaultValue(True),
             ),
         ),
+        "ignore_optional": DictElement(
+            parameter_form=BooleanChoice(
+                title=Title("Optional updates"),
+                label=Label("Ignore optional updates (not auto-selected by Windows Update)"),
+                help_text=Help(
+                    "Optional updates (e.g. most drivers) are only installed when selected "
+                    "manually under Windows Update > Advanced options > Optional updates."
+                ),
+                prefill=DefaultValue(True),
+            ),
+        ),
         "ignore_title_regexes": DictElement(
             parameter_form=List(
                 title=Title("Ignore updates by title or KB (regex)"),

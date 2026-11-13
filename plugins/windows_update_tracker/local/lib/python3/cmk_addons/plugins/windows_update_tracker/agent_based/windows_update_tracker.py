@@ -72,6 +72,7 @@ class Update:
     published: int | None
     first_seen: int | None
     downloaded: bool = False
+    optional: bool = False
 
     @property
     def label(self) -> str:
@@ -142,6 +143,8 @@ def parse_windows_update_tracker(string_table: StringTable) -> Section | None:
                     published=_int_or_none(data.get("published")),
                     first_seen=_int_or_none(data.get("first_seen")),
                     downloaded=bool(data.get("downloaded")),
+                    # Older agent plugins do not send these fields -> not optional
+                    optional=data.get("auto_select") is False or data.get("browse_only") is True,
                 )
             )
         elif kind == "reboot":
@@ -175,26 +178,24 @@ agent_section_windows_update_tracker = AgentSection(
 # ---------------------------------------------------------------------------
 
 
-def _is_filtered(
-    classification: str,
-    title: str,
-    kb: Sequence[str],
-    ignore_classifications: Iterable[str],
-    ignore_regexes: Iterable[str],
-) -> bool:
-    if classification in set(ignore_classifications):
-        return True
-    text = " ".join([title, *kb])
-    return any(re.search(rx, text, re.IGNORECASE) for rx in ignore_regexes if rx)
+def _matches_any(update: Update, regexes: Iterable[str]) -> bool:
+    text = " ".join([update.title, *update.kb])
+    return any(re.search(rx, text, re.IGNORECASE) for rx in regexes if rx)
 
 
-def _ignore_patterns(params: Mapping[str, Any]) -> list[str]:
-    patterns = list(params.get("ignore_title_regexes", []))
-    if params.get("ignore_defender", True):
-        patterns += DEFENDER_REGEXES
-    if params.get("ignore_msrt", True):
-        patterns += MSRT_REGEXES
-    return patterns
+def _filter_reason(update: Update, params: Mapping[str, Any]) -> str | None:
+    """Why an update is ignored (first matching filter), or None if it counts."""
+    if params.get("ignore_defender", True) and _matches_any(update, DEFENDER_REGEXES):
+        return "Defender"
+    if params.get("ignore_msrt", True) and _matches_any(update, MSRT_REGEXES):
+        return "MSRT"
+    if params.get("ignore_optional", True) and update.optional:
+        return "optional"
+    if update.classification in set(params.get("ignore_classifications", ["definition"])):
+        return "classification"
+    if _matches_any(update, params.get("ignore_title_regexes", [])):
+        return "title/KB pattern"
+    return None
 
 
 def _normalize_kbs(kbs: Iterable[str]) -> set[str]:
@@ -280,18 +281,16 @@ def check_windows_update_tracker(params: Mapping[str, Any], section: Section) ->
         )
 
     # --- evaluate updates ----------------------------------------------------------
-    ignore_cls = params.get("ignore_classifications", ["definition"])
-    ignore_rx = _ignore_patterns(params)
     age_rules = params.get("age_rules", [])
     default_rule = params.get("default_rule", {})
 
     active: list[tuple[Update, State, str]] = []
-    filtered: list[Update] = []
+    filtered: list[tuple[Update, str]] = []
     oldest_age: float | None = None
 
     for upd in section.pending:
-        if _is_filtered(upd.classification, upd.title, upd.kb, ignore_cls, ignore_rx):
-            filtered.append(upd)
+        if reason := _filter_reason(upd, params):
+            filtered.append((upd, reason))
             continue
         rule = next((r for r in age_rules if _rule_matches(r, upd)), default_rule)
         basis = rule.get("age_basis", "first_seen")
@@ -346,19 +345,23 @@ def check_windows_update_tracker(params: Mapping[str, Any], section: Section) ->
     yield Metric("windows_updates_oldest_age", oldest_age or 0.0)
     yield Metric("windows_updates_filtered", len(filtered))
 
-    for _u, _s, line in sorted(active, key=lambda t: t[1].value, reverse=True):
-        yield Result(state=State.OK, notice=line)
-    if filtered:
-        yield Result(
-            state=State.OK,
-            notice="Filtered: " + "; ".join(u.display for u in filtered),
-        )
     if source := meta.get("source"):
         yield Result(state=State.OK, notice=f"Update source: {source}")
     if (start_type := meta.get("wu_start_type")) == "Disabled":
         yield Result(state=State.WARN, summary="Windows Update service is disabled")
     elif start_type:
         yield Result(state=State.OK, notice=f"Windows Update service start type: {start_type}")
+
+    # Long output: one update per line, pending first (worst state on top), then filtered
+    if active:
+        yield Result(state=State.OK, notice=f"Pending updates ({count}):")
+        for _u, _s, line in sorted(active, key=lambda t: t[1].value, reverse=True):
+            yield Result(state=State.OK, notice=f"- {line}")
+    if filtered:
+        yield Result(state=State.OK, notice=f"Filtered updates ({len(filtered)}):")
+        for upd, reason in filtered:
+            cls_title = CLASSIFICATION_TITLES.get(upd.classification, upd.classification)
+            yield Result(state=State.OK, notice=f"- {upd.display} ({cls_title}) [{reason}]")
 
 
 check_plugin_windows_update_tracker = CheckPlugin(
@@ -377,6 +380,7 @@ check_plugin_windows_update_tracker = CheckPlugin(
         "ignore_classifications": ["definition"],
         "ignore_defender": True,
         "ignore_msrt": True,
+        "ignore_optional": True,
         "ignore_title_regexes": [],
         "search_age": ("fixed", (2 * DAY, 7 * DAY)),
         "search_error_state": 1,

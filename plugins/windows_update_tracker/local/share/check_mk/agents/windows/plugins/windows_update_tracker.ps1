@@ -30,7 +30,7 @@
 #>
 
 $ErrorActionPreference = 'Stop'
-$PluginVersion = '1.0.0-beta.1'
+$PluginVersion = '1.0.0-beta.3'
 $HistoryDays = 30
 $HistoryMaxEntries = 300
 
@@ -191,6 +191,8 @@ try {
             first_seen          = $state.first_seen[$id]
             downloaded          = [bool]$u.IsDownloaded
             mandatory           = [bool]$u.IsMandatory
+            auto_select         = [bool]$u.AutoSelectOnWebSites
+            browse_only         = [bool]$u.BrowseOnly
         }
     }
     # Forget updates that are no longer pending
