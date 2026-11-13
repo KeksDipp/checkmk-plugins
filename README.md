@@ -8,7 +8,7 @@ and small-business monitoring.
 
 | Plugin | Type | Description | Checkmk | Latest release |
 |--------|------|-------------|---------|----------------|
-| [windows_update_tracker](plugins/windows_update_tracker/) | Agent plugin + checks + bakery | Pending Windows updates with per-update age rules, pending reboot, failed installations, Defender filter | 2.5 (2.4 untested) | [1.0.0-beta.1](https://github.com/KeksDipp/checkmk-plugins/releases/tag/windows_update_tracker-v1.0.0-beta.1) |
+| [windows_update_tracker](plugins/windows_update_tracker/) | Agent plugin + checks + bakery | Pending Windows updates with per-update age rules, pending reboot, failed installations, Defender filter | 2.5 (2.4 untested) | [1.0.0-beta.2](https://github.com/KeksDipp/checkmk-plugins/releases/tag/windows_update_tracker-v1.0.0-beta.2) |
 
 Each plugin lives in its own directory under [`plugins/`](plugins/) with a dedicated README and
 changelog.
