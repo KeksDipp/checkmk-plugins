@@ -30,7 +30,7 @@
 #>
 
 $ErrorActionPreference = 'Stop'
-$PluginVersion = '1.0.0'
+$PluginVersion = '1.0.0-beta.1'
 $HistoryDays = 30
 $HistoryMaxEntries = 300
 

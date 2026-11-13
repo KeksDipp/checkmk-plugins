@@ -235,7 +235,12 @@ _STATE_MARK = {State.OK: "", State.WARN: " (!)", State.CRIT: " (!!)", State.UNKN
 
 
 def _fmt_age(seconds: float | None) -> str:
-    return "n/a" if seconds is None else render.timespan(max(seconds, 0))
+    if seconds is None:
+        return "n/a"
+    if seconds >= DAY:  # whole days are enough for update ages
+        days = int(seconds // DAY)
+        return f"{days} day{'s' if days != 1 else ''}"
+    return render.timespan(max(seconds, 0))
 
 
 # ---------------------------------------------------------------------------

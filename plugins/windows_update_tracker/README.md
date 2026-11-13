@@ -5,7 +5,7 @@ pending and which installations failed.
 
 | | |
 |---|---|
-| **Checkmk** | 2.4, 2.5 (all editions; Agent Bakery support for commercial editions) |
+| **Checkmk** | 2.5, 2.4 untested (all editions; Agent Bakery support for commercial editions) |
 | **Agent** | Windows, Windows PowerShell 5.1 |
 | **License** | GPL-2.0 |
 

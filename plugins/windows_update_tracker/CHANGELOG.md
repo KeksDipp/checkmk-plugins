@@ -1,8 +1,8 @@
 # Changelog – windows_update_tracker
 
-## 1.0.0 – unreleased
+## 1.0.0-beta.1 – 2026-11-13
 
-- Initial release
+- First beta release
 - Agent plugin `windows_update_tracker.ps1` (pending updates, first-seen tracking, pending reboot
   with timestamp, 30-day installation history)
 - Services: *Windows Updates pending*, *Windows Update reboot*, *Windows Update failures*
