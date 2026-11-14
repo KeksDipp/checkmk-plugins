@@ -90,7 +90,10 @@ interval (default 4 h) and timeout (default 600 s), then bake and deploy the age
          timeout: 600
    ```
 
-   If the file already contains a `plugins: execution:` list, add the entry to it.
+   If the file already contains a `plugins: execution:` list, add the entry **at the top, before
+   the `*.*` wildcard entries** – the agent uses the first matching pattern, so an entry below
+   `$CUSTOM_PLUGINS_PATH$\*.*` is silently ignored (the plugin then runs synchronously with a
+   30 s timeout). Check the effective config with `check_mk_agent.exe showconfig plugins`.
 3. Restart the agent: `net stop checkmkservice && net start checkmkservice`
 4. Run a service discovery for the host in Checkmk.
 
