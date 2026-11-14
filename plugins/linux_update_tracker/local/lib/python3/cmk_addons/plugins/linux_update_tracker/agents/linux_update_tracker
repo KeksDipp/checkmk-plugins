@@ -1,0 +1,710 @@
+#!/bin/bash
+# Copyright (C) 2026 Alexander Thomsen
+# License: GNU General Public License v2.0 (see LICENSE)
+# https://github.com/KeksDipp/checkmk-plugins
+#
+# linux_update_tracker - Checkmk agent plugin
+#
+# Reports pending package updates (APT, DNF, YUM, Zypper) with version, repository,
+# classification and "first seen" time, a pending reboot with its start time, the package
+# manager history of the last days and broken packages.
+#
+# Install as /usr/lib/check_mk_agent/plugins/14400/linux_update_tracker (runs every 4 h).
+# Optional config: $MK_CONFDIR/linux_update_tracker.cfg (written by the Agent Bakery)
+#   REFRESH=auto|always|never   refresh the package index before searching (default auto)
+#   REFRESH_MAX_AGE=43200       auto: refresh only if the index is older (seconds)
+#   CMD_TIMEOUT=600             timeout for every package manager call (seconds)
+#   LOCK_TIMEOUT=120            wait this long for a package manager lock (seconds)
+# Output: section <<<linux_update_tracker:sep(0)>>>, one JSON object per line.
+
+PLUGIN_VERSION="1.0.0-beta.1"
+
+export LC_ALL=C LANG=C
+export PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
+umask 077
+shopt -s nullglob
+
+CONFIG_FILE="${LUT_CONFIG:-${MK_CONFDIR:-/etc/check_mk}/linux_update_tracker.cfg}"
+STATE_FILE="${LUT_STATE_FILE:-${MK_VARDIR:-/var/lib/check_mk_agent}/linux_update_tracker.state}"
+HISTORY_DAYS=30
+MAX_HISTORY=200
+
+REFRESH=auto
+REFRESH_MAX_AGE=43200
+CMD_TIMEOUT=600
+LOCK_TIMEOUT=120
+
+# The config is parsed, never sourced: only known keys with valid values are taken.
+if [ -r "$CONFIG_FILE" ]; then
+    while IFS='=' read -r key value; do
+        value=${value%%#*}
+        value=${value//[[:space:]\"\']/}
+        case "$key" in
+            REFRESH) [[ $value =~ ^(auto|always|never)$ ]] && REFRESH=$value ;;
+            REFRESH_MAX_AGE | CMD_TIMEOUT | LOCK_TIMEOUT)
+                [[ $value =~ ^[0-9]{1,7}$ ]] && printf -v "$key" '%s' "$value" ;;
+        esac
+    done <"$CONFIG_FILE"
+fi
+
+NOW=$(date +%s)
+TMPD=$(mktemp -d "${TMPDIR:-/tmp}/linux_update_tracker.XXXXXX") || exit 1
+trap 'rm -rf "$TMPD"' EXIT
+
+run() { timeout --kill-after=10 "$CMD_TIMEOUT" "$@"; }
+mtime() { stat -c %Y "$@" 2>/dev/null; }
+max_of() { sort -n | tail -1; }
+
+# --- JSON helpers -----------------------------------------------------------------------
+
+json_str() {
+    local s=$1
+    s=${s//\\/\\\\}
+    s=${s//\"/\\\"}
+    s=${s//$'\t'/ }
+    s=${s//$'\r'/ }
+    s=${s//$'\n'/ }
+    s=${s//[[:cntrl:]]/}
+    printf '"%s"' "$s"
+}
+json_str_or_null() { if [ -n "$1" ]; then json_str "$1"; else printf 'null'; fi; }
+json_int_or_null() { if [[ $1 =~ ^[0-9]+$ ]]; then printf '%s' "$1"; else printf 'null'; fi; }
+json_bool() { if [ "$1" = 1 ]; then printf 'true'; else printf 'false'; fi; }
+json_arr() {
+    local first=1 item
+    printf '['
+    for item in "$@"; do
+        [ -n "$item" ] || continue
+        [ $first = 1 ] || printf ','
+        first=0
+        json_str "$item"
+    done
+    printf ']'
+}
+first_line() { grep -m1 -E "${2:-.}" "$1" 2>/dev/null | cut -c1-300; }
+
+# --- state ---------------------------------------------------------------------------------
+# TSV: "search_ok <ts>", "refresh_ok <ts>", "reboot <ts>",
+#      "pkg <key> <first_seen> <candidate> <version_seen>"
+
+STATE_LOCK_OK=0
+state_get() { awk -F'\t' -v k="$1" '$1 == k {print $2; exit}' "$TMPD/state.old" 2>/dev/null; }
+: >"$TMPD/state.old"
+state_dir=$(dirname "$STATE_FILE")
+if [ -d "$state_dir" ] || mkdir -p "$state_dir" 2>/dev/null; then
+    if exec 9>>"$STATE_FILE.lock" 2>/dev/null; then
+        # A previous run that is still busy wins; the agent keeps its cached output meanwhile.
+        if command -v flock >/dev/null 2>&1; then flock -w 60 9 || exit 0; fi
+        STATE_LOCK_OK=1
+        [ -f "$STATE_FILE" ] && [ ! -L "$STATE_FILE" ] && cp "$STATE_FILE" "$TMPD/state.old"
+    fi
+fi
+
+# --- environment ------------------------------------------------------------------------
+
+DISTRO=$( (. /etc/os-release 2>/dev/null && echo "${PRETTY_NAME:-$NAME}") )
+IN_CONTAINER=0
+if { command -v systemd-detect-virt >/dev/null 2>&1 && systemd-detect-virt -cq; } ||
+    [ -f /.dockerenv ] || [ -f /run/.containerenv ] ||
+    grep -qa 'container=' /proc/1/environ 2>/dev/null; then
+    IN_CONTAINER=1
+fi
+UPTIME=$(cut -d. -f1 /proc/uptime 2>/dev/null)
+BOOT_TIME=$((NOW - ${UPTIME:-0}))
+
+MANAGER=none
+if [ -f /var/lib/dpkg/status ] && command -v apt-get >/dev/null 2>&1; then
+    MANAGER=apt
+elif command -v zypper >/dev/null 2>&1 && [ -d /etc/zypp ]; then
+    MANAGER=zypper
+elif command -v dnf5 >/dev/null 2>&1; then
+    MANAGER=dnf5
+elif command -v dnf >/dev/null 2>&1; then
+    MANAGER=dnf
+elif command -v yum >/dev/null 2>&1; then
+    MANAGER=yum
+fi
+DNF=$MANAGER
+case $MANAGER in
+    apt) MANAGER_VERSION=$(apt-get --version 2>/dev/null | head -1 | awk '{print $2}') ;;
+    dnf5) MANAGER_VERSION=$(dnf5 --version 2>/dev/null | head -1 | awk '{print $NF}') ;;
+    dnf | yum) MANAGER_VERSION=$($MANAGER --version 2>/dev/null | head -1) ;;
+    zypper) MANAGER_VERSION=$(zypper --version 2>/dev/null | awk '{print $2}') ;;
+    *) MANAGER_VERSION="" ;;
+esac
+
+# --- package index age / refresh -----------------------------------------------------------
+
+index_mtime() {
+    case $MANAGER in
+        apt)
+            mtime /var/lib/apt/periodic/update-success-stamp /var/lib/apt/periodic/update-stamp \
+                /var/lib/apt/lists/partial
+            ;;
+        dnf) mtime /var/cache/dnf/*/repodata/repomd.xml ;;
+        dnf5) mtime /var/cache/libdnf5/*/repodata/repomd.xml ;;
+        yum) mtime /var/cache/yum/*/*/*/repomd.xml /var/cache/yum/*/repomd.xml ;;
+        zypper) mtime /var/cache/zypp/raw/*/repodata/repomd.xml ;;
+    esac
+}
+
+last_refresh() { { index_mtime; state_get refresh_ok; } | grep -E '^[0-9]+$' | max_of; }
+
+REFRESH_ATTEMPTED=0 REFRESH_OK="" REFRESH_ERROR=""
+LAST_REFRESH=$(last_refresh)
+if [ "$MANAGER" != none ]; then
+    case $REFRESH in
+        always) REFRESH_ATTEMPTED=1 ;;
+        auto) [ -z "$LAST_REFRESH" ] || [ $((NOW - LAST_REFRESH)) -ge "$REFRESH_MAX_AGE" ] &&
+            REFRESH_ATTEMPTED=1 ;;
+    esac
+fi
+
+if [ $REFRESH_ATTEMPTED = 1 ]; then
+    out="$TMPD/refresh.out"
+    case $MANAGER in
+        apt)
+            run apt-get update -q -o DPkg::Lock::Timeout="$LOCK_TIMEOUT" >"$out" 2>&1
+            rc=$?
+            # apt-get update exits 0 when single repositories fail, they only print W:/E:
+            [ $rc = 0 ] && grep -qE '^(E:|W: (Failed to fetch|Some index files))' "$out" && rc=1
+            ;;
+        dnf | dnf5) run "$DNF" -q -y makecache --refresh >"$out" 2>&1; rc=$? ;;
+        yum) { run yum -q clean expire-cache && run yum -q -y makecache fast; } >"$out" 2>&1; rc=$? ;;
+        zypper) ZYPP_LOCK_TIMEOUT=$LOCK_TIMEOUT run zypper -n -q refresh >"$out" 2>&1; rc=$? ;;
+    esac
+    NOW=$(date +%s) # the refresh can take minutes
+    if [ "$rc" = 0 ]; then
+        REFRESH_OK=1
+        echo "refresh_ok	$NOW" >>"$TMPD/state.new"
+    else
+        REFRESH_OK=0
+        [ "$rc" = 124 ] && REFRESH_ERROR="timeout after ${CMD_TIMEOUT}s"
+        [ -z "$REFRESH_ERROR" ] && REFRESH_ERROR=$(first_line "$out" '^(E:|W:|Error|Problem|Curl error|Failed)')
+        [ -z "$REFRESH_ERROR" ] && REFRESH_ERROR=$(first_line "$out" '[[:alnum:]]')
+        [ -z "$REFRESH_ERROR" ] && REFRESH_ERROR="exit code $rc"
+    fi
+    LAST_REFRESH=$( { index_mtime; [ "$REFRESH_OK" = 1 ] && echo "$NOW"; state_get refresh_ok; } |
+        grep -E '^[0-9]+$' | max_of)
+fi
+[ "$REFRESH_OK" != 1 ] && [ -n "$(state_get refresh_ok)" ] &&
+    printf 'refresh_ok\t%s\n' "$(state_get refresh_ok)" >>"$TMPD/state.new"
+
+# --- pending updates ----------------------------------------------------------------------
+# pending.tsv: key name arch installed candidate repo class severity advisory published held phased
+
+SEARCH_OK=0 SEARCH_ERROR=""
+PENDING="$TMPD/pending.tsv"
+: >"$PENDING"
+
+search_failed() { # $1 = rc, $2 = output file
+    [ "$1" = 124 ] && SEARCH_ERROR="timeout after ${CMD_TIMEOUT}s" && return
+    SEARCH_ERROR=$(first_line "$2" '^(E:|Error|Problem|Cache-only|Failed|Repository)')
+    [ -z "$SEARCH_ERROR" ] && SEARCH_ERROR=$(first_line "$2" '[[:alnum:]]')
+    [ -z "$SEARCH_ERROR" ] && SEARCH_ERROR="exit code $1"
+}
+
+search_apt() {
+    run apt list --upgradable >"$TMPD/apt.list" 2>"$TMPD/apt.err"
+    local rc=$?
+    if [ $rc != 0 ]; then
+        cat "$TMPD/apt.err" >>"$TMPD/apt.list"
+        search_failed $rc "$TMPD/apt.list"
+        return
+    fi
+    apt-mark showhold >"$TMPD/apt.hold" 2>/dev/null
+    awk '/\[upgradable from: /' "$TMPD/apt.list" | cut -d/ -f1 | sort -u >"$TMPD/apt.names"
+    if [ -s "$TMPD/apt.names" ]; then
+        # phased updates (Ubuntu): candidate version line carries "(phased NN%)"
+        xargs -r run apt-cache policy <"$TMPD/apt.names" 2>/dev/null | awk '
+            /^[^ ].*:$/ { pkg = substr($0, 1, length($0) - 1); cand = ""; next }
+            /^  Candidate: / { cand = $2; next }
+            /\(phased [0-9]+%\)/ { v = ($1 == "***") ? $2 : $1; if (v == cand) print pkg }
+        ' >"$TMPD/apt.phased"
+    fi
+    awk -v hold="$TMPD/apt.hold" -v phased="$TMPD/apt.phased" '
+        BEGIN {
+            while ((getline l < hold) > 0) H[l] = 1
+            while ((getline l < phased) > 0) P[l] = 1
+        }
+        /\[upgradable from: / {
+            split($1, a, "/"); name = a[1]; suites = a[2]; cand = $2; arch = $3
+            inst = $0; sub(/.*\[upgradable from: /, "", inst); sub(/\].*/, "", inst)
+            cls = (suites ~ /security/) ? "security" : "other"
+            held = (name in H || (name ":" arch) in H) ? 1 : 0
+            ph = (name in P || (name ":" arch) in P) ? 1 : 0
+            printf "%s:%s\t%s\t%s\t%s\t%s\t%s\t%s\t\t\t\t%d\t%d\n",
+                name, arch, name, arch, inst, cand, suites, cls, held, ph
+        }' "$TMPD/apt.list" >"$PENDING"
+    SEARCH_OK=1
+}
+
+# Advisory data (dnf4/yum "updateinfo list", dnf5 "advisory list") -> adv.tsv
+# name class severity advisory issued
+rpm_name_from_nevra() { # stdin: <advisory> <type> <severity> <nevra> [issued]
+    awk '{
+        nevra = $4; sub(/\.[^.]+$/, "", nevra)          # strip .arch
+        n = split(nevra, p, "-"); name = p[1]
+        for (i = 2; i <= n - 2; i++) name = name "-" p[i]  # strip -version-release
+        print name "\t" $2 "\t" $3 "\t" $1 "\t" $5
+    }'
+}
+
+advisories_rpm() {
+    case $MANAGER in
+        dnf5)
+            run dnf5 -q -C advisory list --updates 2>/dev/null |
+                awk 'NR > 1 && NF >= 4 {
+                    t = tolower($2); s = tolower($3); if (s == "none") s = ""
+                    issued = (NF >= 6) ? $5 " " $6 : ""
+                    print $1, t, (s == "" ? "-" : s), $4, issued
+                }' | rpm_name_from_nevra
+            ;;
+        dnf | yum)
+            local args="--available"
+            [ $MANAGER = yum ] && args="available"
+            run "$MANAGER" -q -C updateinfo list $args 2>/dev/null |
+                awk 'NF == 3 && $1 !~ /^(Loaded|updateinfo)/ {
+                    t = $2; s = "-"
+                    if (t ~ /\/Sec\.?$/) { s = tolower(t); sub(/\/.*/, "", s); t = "security" }
+                    print $1, tolower(t), s, $3
+                }' | rpm_name_from_nevra
+            ;;
+    esac | awk -F'\t' '{
+        t = $2; s = ($3 == "-") ? "" : $3
+        if (t ~ /^sec/) t = "security"
+        else if (t ~ /^bug/) t = "bugfix"
+        else if (t ~ /^(enhancement|newpackage)$/) t = "enhancement"
+        else t = "other"
+        print $1 "\t" t "\t" s "\t" $4 "\t" $5
+    }' >"$TMPD/adv.tsv"
+    # issued "YYYY-MM-DD HH:MM:SS" -> epoch (one date call for all lines)
+    if [ -s "$TMPD/adv.tsv" ]; then
+        cut -f5 "$TMPD/adv.tsv" | sed 's/^$/1970-01-01 00:00:00/' |
+            date -f - +%s 2>/dev/null >"$TMPD/adv.epoch"
+        if [ "$(wc -l <"$TMPD/adv.epoch")" = "$(wc -l <"$TMPD/adv.tsv")" ]; then
+            paste "$TMPD/adv.tsv" "$TMPD/adv.epoch" |
+                awk -F'\t' -v OFS='\t' '{ $5 = ($6 > 0) ? $6 : ""; NF = 5; print }' >"$TMPD/adv.tmp" &&
+                mv "$TMPD/adv.tmp" "$TMPD/adv.tsv"
+        else
+            cut -f1-4 "$TMPD/adv.tsv" | sed 's/$/\t/' >"$TMPD/adv.tmp" && mv "$TMPD/adv.tmp" "$TMPD/adv.tsv"
+        fi
+    fi
+}
+
+installed_rpm() { # name|arch|evr, highest version last
+    rpm -qa --qf '%{NAME}|%{ARCH}|%|EPOCH?{%{EPOCH}:}:{}|%{VERSION}-%{RELEASE}\n' 2>/dev/null |
+        sort -t'|' -k1,1 -k2,2 -k3,3V >"$TMPD/rpm.installed"
+}
+
+# Merges candidates (cand.tsv: name arch evr repo published) with installed versions and
+# advisories into pending.tsv. The most severe advisory of a package wins.
+merge_rpm() {
+    awk -F'\t' -v inst="$TMPD/rpm.installed" -v adv="$TMPD/adv.tsv" '
+        function crank(c) { return c == "security" ? 4 : c == "bugfix" ? 3 : c == "enhancement" ? 2 : 1 }
+        function srank(s) { return s == "critical" ? 4 : s == "important" ? 3 : s == "moderate" ? 2 : s == "low" ? 1 : 0 }
+        BEGIN {
+            while ((getline l < inst) > 0) { split(l, a, "|"); I[a[1] "." a[2]] = a[3]; I[a[1]] = a[3] }
+            while ((getline l < adv) > 0) {
+                split(l, a, "\t"); n = a[1]
+                r = crank(a[2]) * 10 + srank(a[3])
+                if (!(n in R) || r > R[n]) { R[n] = r; C[n] = a[2]; S[n] = a[3]; A[n] = a[4]; D[n] = a[5] }
+            }
+        }
+        NF >= 4 {
+            name = $1; arch = $2; key = name "." arch
+            iv = (key in I) ? I[key] : ((name in I) ? I[name] : "")
+            cls = (name in C) ? C[name] : "other"
+            pub = (name in D && D[name] != "") ? D[name] : $5
+            printf "%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t0\t0\n",
+                key, name, arch, iv, $3, $4, cls, S[name], A[name], pub
+        }' "$TMPD/cand.tsv" >"$PENDING"
+}
+
+search_dnf() {
+    run "$DNF" -q -C repoquery --upgrades --latest-limit=1 \
+        --qf '%{name}|%{arch}|%{epoch}|%{version}-%{release}|%{repoid}|%{buildtime}\n' \
+        >"$TMPD/rq.out" 2>"$TMPD/rq.err"
+    local rc=$?
+    if [ $rc != 0 ] || grep -qiE '^(Error|Cache-only enabled but no cache)' "$TMPD/rq.err"; then
+        cat "$TMPD/rq.err" >>"$TMPD/rq.out"
+        search_failed $rc "$TMPD/rq.out"
+        return
+    fi
+    grep '|' "$TMPD/rq.out" | sort -u >"$TMPD/rq.lines"
+    # buildtime: dnf5 prints epoch seconds, dnf4 "YYYY-MM-DD HH:MM"
+    cut -d'|' -f6 "$TMPD/rq.lines" | sed -E 's/^([0-9]+)$/@\1/; s/^$/@0/' |
+        date -f - +%s 2>/dev/null >"$TMPD/rq.epoch"
+    [ "$(wc -l <"$TMPD/rq.epoch")" = "$(wc -l <"$TMPD/rq.lines")" ] ||
+        sed 's/.*/0/' "$TMPD/rq.lines" >"$TMPD/rq.epoch"
+    paste -d'|' "$TMPD/rq.lines" "$TMPD/rq.epoch" | awk -F'|' -v OFS='\t' '{
+        evr = ($3 != "" && $3 != "0" && $3 != "(none)") ? $3 ":" $4 : $4
+        print $1, $2, evr, $5, ($7 > 0 ? $7 : "")
+    }' >"$TMPD/cand.tsv"
+    installed_rpm
+    advisories_rpm
+    merge_rpm
+    SEARCH_OK=1
+}
+
+search_yum() {
+    run yum -q -C check-update >"$TMPD/cu.out" 2>"$TMPD/cu.err"
+    local rc=$?
+    if [ $rc != 0 ] && [ $rc != 100 ]; then
+        cat "$TMPD/cu.err" >>"$TMPD/cu.out"
+        search_failed $rc "$TMPD/cu.out"
+        return
+    fi
+    # "name.arch version repo", long names wrap onto the next line
+    awk -v OFS='\t' '
+        /^(Obsoleting|Security:|Loaded plugins)/ { if ($1 == "Obsoleting") exit; next }
+        { for (i = 1; i <= NF; i++) { t[++n] = $i; if (n == 3) {
+            na = t[1]; arch = na; sub(/.*\./, "", arch); name = na; sub(/\.[^.]+$/, "", name)
+            print name, arch, t[2], t[3], ""; n = 0 } } }
+    ' "$TMPD/cu.out" >"$TMPD/cand.tsv"
+    installed_rpm
+    advisories_rpm
+    merge_rpm
+    SEARCH_OK=1
+}
+
+search_zypper() {
+    run zypper -n -q --no-refresh -x list-updates >"$TMPD/lu.xml" 2>&1
+    local rc=$?
+    if [ $rc != 0 ] || grep -q '<message type="error"' "$TMPD/lu.xml"; then
+        sed -n 's/.*<message type="error">\(.*\)<\/message>.*/\1/p' "$TMPD/lu.xml" >"$TMPD/lu.err"
+        [ -s "$TMPD/lu.err" ] || cp "$TMPD/lu.xml" "$TMPD/lu.err"
+        search_failed $rc "$TMPD/lu.err"
+        return
+    fi
+    grep -oE '<update kind="package"[^>]*>|<source [^>]*alias="[^"]*"' "$TMPD/lu.xml" | awk -v OFS='\t' '
+        function attr(s, a,   r) { r = s; if (!match(r, " " a "=\"[^\"]*\"")) return ""
+            r = substr(r, RSTART + length(a) + 3, RLENGTH - length(a) - 4); return r }
+        /^<update / { if (name != "") print name, arch, ed, old, "";
+            name = attr($0, "name"); arch = attr($0, "arch"); ed = attr($0, "edition"); old = attr($0, "edition-old"); next }
+        /^<source / { if (name != "") { print name, arch, ed, old, attr($0, "alias"); name = "" } }
+        END { if (name != "") print name, arch, ed, old, "" }
+    ' >"$TMPD/zy.pkgs"
+
+    # needed patches: category, severity, issue date, affected packages
+    run zypper -n -q --no-refresh -x list-patches 2>/dev/null |
+        grep -oE '<update kind="patch"[^>]*>|<issue-date time_t="[0-9]+"' | awk -v OFS='\t' '
+        function attr(s, a,   r) { r = s; if (!match(r, " " a "=\"[^\"]*\"")) return ""
+            return substr(r, RSTART + length(a) + 3, RLENGTH - length(a) - 4) }
+        /^<update / { if (p != "") print p, c, s, ""; p = attr($0, "name"); c = attr($0, "category"); s = attr($0, "severity")
+            if (attr($0, "status") != "needed") p = ""; next }
+        /^<issue-date / { if (p != "") { d = $0; gsub(/[^0-9]/, "", d); print p, c, s, d; p = "" } }
+        END { if (p != "") print p, c, s, "" }
+    ' >"$TMPD/zy.patches"
+    : >"$TMPD/adv.tsv"
+    if [ -s "$TMPD/zy.patches" ]; then
+        cut -f1 "$TMPD/zy.patches" | xargs -r run zypper -n -q --no-refresh info -t patch 2>/dev/null |
+            awk -v pf="$TMPD/zy.patches" '
+            BEGIN { while ((getline l < pf) > 0) { split(l, a, "\t"); C[a[1]] = a[2]; S[a[1]] = a[3]; D[a[1]] = a[4] } }
+            /^Name *: / { patch = $3; inconf = 0; next }
+            /^[A-Z][A-Za-z ]* *: / { inconf = ($1 == "Conflicts"); next }
+            inconf && /^    [^ ]/ && patch in C {
+                n = $1; sub(/\.[^.]+$/, "", n)
+                c = C[patch]
+                if (c == "security") t = "security"
+                else if (c == "recommended") t = "bugfix"
+                else if (c == "optional" || c == "feature") t = "enhancement"
+                else t = "other"
+                s = S[patch]; if (s == "unspecified") s = ""
+                print n "\t" t "\t" s "\t" patch "\t" D[patch]
+            }' >"$TMPD/adv.tsv"
+    fi
+    awk -F'\t' -v OFS='\t' '{ print $1, $2, $3, $5, "" }' "$TMPD/zy.pkgs" >"$TMPD/cand.tsv"
+    awk -F'\t' -v OFS='|' '{ print $1, $2, $4 }' "$TMPD/zy.pkgs" >"$TMPD/rpm.installed"
+    merge_rpm
+    SEARCH_OK=1
+}
+
+case $MANAGER in
+    apt) search_apt ;;
+    dnf | dnf5) search_dnf ;;
+    yum) search_yum ;;
+    zypper) search_zypper ;;
+    *) SEARCH_ERROR="no supported package manager found (apt, dnf, yum, zypper)" ;;
+esac
+
+if [ $SEARCH_OK = 1 ]; then
+    LAST_SUCCESS=$NOW
+else
+    LAST_SUCCESS=$(state_get search_ok)
+fi
+[ -n "$LAST_SUCCESS" ] && printf 'search_ok\t%s\n' "$LAST_SUCCESS" >>"$TMPD/state.new"
+
+# --- reboot -------------------------------------------------------------------------------
+
+REBOOT_REQUIRED=0 REBOOT_SINCE=""
+REBOOT_SOURCES=() REBOOT_DETAILS=() REBOOT_PKGS=() SERVICES=() SERVICES_CHECKED=0
+RUNNING_KERNEL=$(uname -r) LATEST_KERNEL=""
+
+reboot_reason() { # source, time (may be empty), detail
+    REBOOT_REQUIRED=1
+    REBOOT_SOURCES+=("$1")
+    [ -n "$3" ] && REBOOT_DETAILS+=("$3")
+    if [[ $2 =~ ^[0-9]+$ ]] && { [ -z "$REBOOT_SINCE" ] || [ "$2" -lt "$REBOOT_SINCE" ]; }; then
+        REBOOT_SINCE=$2
+    fi
+}
+
+for f in /run/reboot-required /var/run/reboot-required; do
+    [ -f "$f" ] || continue
+    reboot_reason reboot-required "$(mtime "$f")" "$f exists"
+    [ -r "$f.pkgs" ] && mapfile -t REBOOT_PKGS < <(sort -u "$f.pkgs" | head -50)
+    break
+done
+
+# Newest installed kernel vs. running kernel (not inside containers: they use the host kernel)
+if [ $IN_CONTAINER = 0 ]; then
+    kernels=()
+    for k in /boot/vmlinuz-* /boot/vmlinux-*; do
+        [[ $k == *rescue* || $k == *.old || -L $k ]] && continue
+        kernels+=("${k#/boot/vmlinu[xz]-}")
+    done
+    if [ ${#kernels[@]} = 0 ]; then
+        for k in /lib/modules/*/vmlinuz; do kernels+=("$(basename "$(dirname "$k")")"); done
+    fi
+    if [ ${#kernels[@]} -gt 0 ]; then
+        LATEST_KERNEL=$(printf '%s\n' "${kernels[@]}" | sort -V | tail -1)
+        if [ "$LATEST_KERNEL" != "$RUNNING_KERNEL" ]; then
+            kfile=""
+            for k in /boot/vmlinuz-"$LATEST_KERNEL" /boot/vmlinux-"$LATEST_KERNEL" \
+                /lib/modules/"$LATEST_KERNEL"/vmlinuz; do
+                [ -e "$k" ] && kfile=$k && break
+            done
+            # ctime = when the file was written to this host (mtime is the build date)
+            reboot_reason kernel "$(stat -c %Z "$kfile" 2>/dev/null)" \
+                "running kernel $RUNNING_KERNEL, newest installed $LATEST_KERNEL"
+        fi
+    fi
+fi
+
+# RPM systems: core packages installed after boot (same list as dnf needs-restarting -r)
+if [ "$MANAGER" != apt ] && command -v rpm >/dev/null 2>&1; then
+    core="kernel kernel-core kernel-rt kernel-default glibc linux-firmware systemd udev dbus dbus-broker dbus-daemon microcode_ctl ucode-intel ucode-amd"
+    [ $IN_CONTAINER = 1 ] && core="glibc systemd dbus dbus-broker dbus-daemon"
+    for f in /etc/dnf/plugins/needs-restarting.d/*.conf /etc/zypp/needreboot; do
+        core="$core $(grep -vE '^[[:space:]]*(#|$)' "$f" 2>/dev/null | tr '\n' ' ')"
+    done
+    # shellcheck disable=SC2086
+    newer=$(rpm -q --qf '%{NAME} %{INSTALLTIME}\n' $core 2>/dev/null |
+        awk -v b="$BOOT_TIME" 'NF == 2 && $2 ~ /^[0-9]+$/ && $2 > b + 60')
+    if [ -n "$newer" ]; then
+        mapfile -t names < <(awk '{print $1}' <<<"$newer" | sort -u)
+        REBOOT_PKGS+=("${names[@]}")
+        reboot_reason core-packages "$(awk '{print $2}' <<<"$newer" | sort -n | head -1)" \
+            "updated since boot: ${names[*]}"
+    fi
+fi
+
+# Services that need a restart
+if [ "$MANAGER" = apt ] && command -v needrestart >/dev/null 2>&1; then
+    if run needrestart -b -r l >"$TMPD/nr.out" 2>/dev/null; then
+        SERVICES_CHECKED=1
+        mapfile -t SERVICES < <(sed -n 's/^NEEDRESTART-SVC: *//p' "$TMPD/nr.out" | sort -u)
+        ksta=$(sed -n 's/^NEEDRESTART-KSTA: *//p' "$TMPD/nr.out")
+        if [ $IN_CONTAINER = 0 ] && [[ $ksta =~ ^[23]$ ]]; then
+            reboot_reason needrestart "" "needrestart: kernel status $ksta (newer kernel available)"
+        fi
+        ucsta=$(sed -n 's/^NEEDRESTART-UCSTA: *//p' "$TMPD/nr.out")
+        if [ $IN_CONTAINER = 0 ] && [ "$ucsta" = 2 ]; then
+            reboot_reason microcode "" "needrestart: newer CPU microcode available"
+        fi
+    fi
+elif [ "$MANAGER" = dnf ] || [ "$MANAGER" = dnf5 ] || [ "$MANAGER" = yum ]; then
+    nr=""
+    if [ "$MANAGER" = yum ]; then
+        command -v needs-restarting >/dev/null 2>&1 && nr="needs-restarting"
+    elif "$DNF" -q -C needs-restarting --help >/dev/null 2>&1; then
+        nr="$DNF -q -C needs-restarting"
+    fi
+    # shellcheck disable=SC2086
+    if [ -n "$nr" ] && run $nr -s >"$TMPD/nr.out" 2>/dev/null; then
+        SERVICES_CHECKED=1
+        mapfile -t SERVICES < <(grep -E '^[[:alnum:]@._-]+$' "$TMPD/nr.out" | sort -u)
+    fi
+elif [ "$MANAGER" = zypper ] && command -v lsof >/dev/null 2>&1; then
+    if run zypper -n -q ps -sss >"$TMPD/nr.out" 2>/dev/null; then
+        SERVICES_CHECKED=1
+        mapfile -t SERVICES < <(grep -E '^[[:alnum:]@._-]+$' "$TMPD/nr.out" | sort -u)
+    fi
+fi
+
+if [ $REBOOT_REQUIRED = 1 ]; then
+    # Sources without a timestamp: since when this plugin sees the reboot
+    if [ -z "$REBOOT_SINCE" ]; then
+        REBOOT_SINCE=$(state_get reboot)
+        [ -z "$REBOOT_SINCE" ] && REBOOT_SINCE=$NOW
+    fi
+    printf 'reboot\t%s\n' "$(state_get reboot | grep . || echo "$REBOOT_SINCE")" >>"$TMPD/state.new"
+fi
+
+# --- history (failed transactions) and broken packages -----------------------------------
+# history.tsv: date result command packages(space separated names) error
+
+HISTORY_SUPPORTED=0 HISTORY_ERROR="" BROKEN_SUPPORTED=0
+CUTOFF=$((NOW - HISTORY_DAYS * 86400))
+: >"$TMPD/history.tsv"
+: >"$TMPD/broken.tsv"
+
+history_apt() {
+    HISTORY_SUPPORTED=1
+    local logs=() f
+    for f in /var/log/apt/history.log.1.gz /var/log/apt/history.log.1 /var/log/apt/history.log; do
+        [ -r "$f" ] && logs+=("$f")
+    done
+    [ ${#logs[@]} = 0 ] && return
+    for f in "${logs[@]}"; do
+        case $f in *.gz) zcat "$f" 2>/dev/null ;; *) cat "$f" ;; esac
+        echo
+    done | awk -v OFS='\t' '
+        function flush() {
+            if (start == "") return
+            res = (err != "") ? "failed" : (end == "") ? "open" : "succeeded"
+            print start, res, cmd, pk, err
+            start = ""; end = ""; cmd = ""; pk = ""; err = ""
+        }
+        /^Start-Date: / { flush(); start = substr($0, 13); gsub(/  +/, " ", start); next }
+        /^End-Date: / { end = 1; next }
+        /^Commandline: / { cmd = substr($0, 14); next }
+        /^Error: / { err = substr($0, 8); next }
+        /^(Install|Upgrade|Downgrade|Remove|Purge|Reinstall): / {
+            l = $0; sub(/^[A-Za-z]+: /, "", l); gsub(/ \([^)]*\)/, "", l)
+            n = split(l, a, ", ")
+            for (i = 1; i <= n; i++) { p = a[i]; sub(/:.*/, "", p); pk = pk (pk == "" ? "" : " ") p }
+        }
+        END { flush() }
+    ' >"$TMPD/apt.hist"
+    [ -s "$TMPD/apt.hist" ] || return
+    cut -f1 "$TMPD/apt.hist" | date -f - +%s 2>/dev/null >"$TMPD/apt.hist.epoch"
+    [ "$(wc -l <"$TMPD/apt.hist.epoch")" = "$(wc -l <"$TMPD/apt.hist")" ] || return
+    # A transaction without End-Date is aborted unless it is the last one (may still run)
+    paste "$TMPD/apt.hist.epoch" "$TMPD/apt.hist" | awk -F'\t' -v OFS='\t' -v cut="$CUTOFF" '
+        { L[NR] = $0 } END { for (i = 1; i <= NR; i++) { split(L[i], a, "\t")
+            if (a[1] < cut) continue
+            r = a[3]; if (r == "open") { if (i == NR) continue; r = "aborted" }
+            print a[1], r, a[4], a[5], a[6] } }
+    ' | tail -n "$MAX_HISTORY" >"$TMPD/history.tsv"
+}
+
+history_rpm() {
+    local m=$MANAGER ids id
+    HISTORY_SUPPORTED=1
+    if ! run "$m" -q -C history list >"$TMPD/hl.out" 2>"$TMPD/hl.err"; then
+        grep -qi 'no transactions' "$TMPD/hl.out" "$TMPD/hl.err" && return
+        HISTORY_ERROR=$(first_line "$TMPD/hl.err" '[[:alnum:]]')
+        HISTORY_ERROR=${HISTORY_ERROR:-history list failed}
+        return
+    fi
+    # ID ... YYYY-MM-DD HH:MM[:SS] ... ; keep transactions of the last days
+    awk '$1 ~ /^[0-9]+$/ && match($0, /[0-9]{4}-[0-9]{2}-[0-9]{2} [0-9]{2}:[0-9]{2}(:[0-9]{2})?/) {
+        print $1 "\t" substr($0, RSTART, RLENGTH) }' "$TMPD/hl.out" | head -n "$MAX_HISTORY" >"$TMPD/hl.ids"
+    [ -s "$TMPD/hl.ids" ] || return
+    cut -f2 "$TMPD/hl.ids" | date -f - +%s 2>/dev/null >"$TMPD/hl.epoch"
+    [ "$(wc -l <"$TMPD/hl.epoch")" = "$(wc -l <"$TMPD/hl.ids")" ] || return
+    mapfile -t ids < <(paste "$TMPD/hl.ids" "$TMPD/hl.epoch" | awk -F'\t' -v c="$CUTOFF" '$3 >= c {print $1 "\t" $3}')
+    for id in "${ids[@]}"; do
+        run "$m" -q -C history info "${id%%	*}" 2>/dev/null | awk -v OFS='\t' -v ts="${id##*	}" '
+            /^(Return-Code|Status) *: / { s = $0; sub(/^[^:]*: */, "", s)
+                res = (s ~ /^(Success|Ok)/) ? "succeeded" : "failed"; if (res == "failed") err = s }
+            /^(Command Line|Description) *: / { cmd = $0; sub(/^[^:]*: */, "", cmd) }
+            /^Packages [Aa]ltered:/ { inpk = 1; next }
+            /^[A-Z][A-Za-z ]+:/ { inpk = 0 }
+            inpk && /^ +(Install|Upgrade|Downgrade|Reinstall|Erase|Remove|Removed|Obsoleting|Dep-Install) / {
+                for (i = 2; i <= NF; i++) if ($i ~ /-[^-]+-[^-]+\.[^.]+$/) {
+                    n = $i; sub(/\.[^.]+$/, "", n); k = split(n, p, "-"); name = p[1]
+                    for (j = 2; j <= k - 2; j++) name = name "-" p[j]
+                    if (!(name in seen)) { seen[name] = 1; pk = pk (pk == "" ? "" : " ") name }
+                    break }
+            }
+            END { if (res != "") print ts, res, cmd, pk, err }'
+    done | sort -n >"$TMPD/history.tsv"
+}
+
+broken_apt() {
+    BROKEN_SUPPORTED=1
+    dpkg-query -W -f='${Package}:${Architecture}\t${db:Status-Abbrev}\n' 2>/dev/null |
+        awk -F'\t' '{ s = $2; if (substr(s, 2, 1) ~ /[UFHWt]/ || substr(s, 3, 1) == "R") print $1 "\t" s }' |
+        head -100 >"$TMPD/broken.tsv"
+}
+
+broken_rpm() {
+    BROKEN_SUPPORTED=1
+    if [ "$MANAGER" = yum ]; then
+        run yum -q -C check >"$TMPD/chk.out" 2>&1
+    else
+        run "$DNF" -q -C check >"$TMPD/chk.out" 2>&1
+    fi
+    grep -vE '^(Loaded plugins|check all|$)' "$TMPD/chk.out" | head -100 |
+        awk '{ print $1 "\t" $0 }' >"$TMPD/broken.tsv"
+}
+
+case $MANAGER in
+    apt) history_apt; broken_apt ;;
+    dnf | dnf5 | yum) history_rpm; broken_rpm ;;
+esac
+
+# --- state merge + output -------------------------------------------------------------------
+
+awk -F'\t' -v OFS='\t' -v now="$NOW" -v ok="$SEARCH_OK" -v old="$TMPD/state.old" \
+    -v state_out="$TMPD/state.pkgs" -v json_out="$TMPD/pending.json" '
+    function js(s) { gsub(/\\/, "\\\\", s); gsub(/"/, "\\\"", s); gsub(/[\001-\037]/, "", s); return "\"" s "\"" }
+    function jn(s) { return (s ~ /^[0-9]+$/) ? s : "null" }
+    BEGIN {
+        while ((getline l < old) > 0) {
+            split(l, a, "\t")
+            if (a[1] == "pkg") { FS0[a[2]] = a[3]; CA[a[2]] = a[4]; VS[a[2]] = a[5]; KEEP[a[2]] = l }
+        }
+    }
+    {
+        key = $1; fs = (key in FS0 && FS0[key] ~ /^[0-9]+$/) ? FS0[key] : now
+        vs = (key in CA && CA[key] == $5 && VS[key] ~ /^[0-9]+$/) ? VS[key] : now
+        print "pkg", key, fs, $5, vs > state_out
+        printf "{\"type\":\"pending\",\"name\":%s,\"arch\":%s,\"installed\":%s,\"candidate\":%s,\"repo\":%s,\"classification\":%s,\"severity\":%s,\"advisory\":%s,\"published\":%s,\"first_seen\":%s,\"version_seen\":%s,\"held\":%s,\"phased\":%s}\n",
+            js($2), js($3), js($4), js($5), js($6), js($7), js($8), js($9), jn($10), fs, vs,
+            ($11 == 1 ? "true" : "false"), ($12 == 1 ? "true" : "false") > json_out
+    }
+    END {
+        # failed search: keep the known first-seen times
+        if (ok != 1) for (k in KEEP) print KEEP[k] > state_out
+    }' "$PENDING"
+
+echo "<<<linux_update_tracker:sep(0)>>>"
+printf '{"type":"meta","plugin_version":%s,"now":%s,"manager":%s,"manager_version":%s,"distro":%s,"in_container":%s,"refresh_mode":%s,"refresh_attempted":%s,"refresh_ok":%s,"refresh_error":%s,"last_refresh":%s,"search_ok":%s,"error":%s,"last_success":%s,"history_supported":%s,"history_error":%s,"broken_supported":%s,"state_ok":%s}\n' \
+    "$(json_str "$PLUGIN_VERSION")" "$NOW" "$(json_str "$MANAGER")" "$(json_str_or_null "$MANAGER_VERSION")" \
+    "$(json_str_or_null "$DISTRO")" "$(json_bool $IN_CONTAINER)" "$(json_str "$REFRESH")" \
+    "$(json_bool $REFRESH_ATTEMPTED)" "$(case $REFRESH_OK in 1) echo true ;; 0) echo false ;; *) echo null ;; esac)" \
+    "$(json_str_or_null "$REFRESH_ERROR")" "$(json_int_or_null "$LAST_REFRESH")" "$(json_bool $SEARCH_OK)" \
+    "$(json_str_or_null "$SEARCH_ERROR")" "$(json_int_or_null "$LAST_SUCCESS")" \
+    "$(json_bool $HISTORY_SUPPORTED)" "$(json_str_or_null "$HISTORY_ERROR")" "$(json_bool $BROKEN_SUPPORTED)" \
+    "$(json_bool $STATE_LOCK_OK)"
+[ -s "$TMPD/pending.json" ] && cat "$TMPD/pending.json"
+printf '{"type":"reboot","required":%s,"since":%s,"sources":%s,"details":%s,"packages":%s,"running_kernel":%s,"latest_kernel":%s,"boot_time":%s,"services":%s,"services_checked":%s}\n' \
+    "$(json_bool $REBOOT_REQUIRED)" "$(json_int_or_null "$REBOOT_SINCE")" "$(json_arr "${REBOOT_SOURCES[@]}")" \
+    "$(json_arr "${REBOOT_DETAILS[@]}")" "$(json_arr "${REBOOT_PKGS[@]}")" "$(json_str_or_null "$RUNNING_KERNEL")" \
+    "$(json_str_or_null "$LATEST_KERNEL")" "$BOOT_TIME" "$(json_arr "${SERVICES[@]}")" "$(json_bool $SERVICES_CHECKED)"
+awk -F'\t' '
+    function js(s) { gsub(/\\/, "\\\\", s); gsub(/"/, "\\\"", s); gsub(/[\001-\037]/, "", s); return "\"" s "\"" }
+    $1 ~ /^[0-9]+$/ {
+        n = split($4, p, " "); arr = ""
+        for (i = 1; i <= n && i <= 500; i++) arr = arr (i > 1 ? "," : "") js(p[i])
+        printf "{\"type\":\"history\",\"date\":%s,\"result\":%s,\"command\":%s,\"packages\":[%s],\"error\":%s}\n",
+            $1, js($2), js(substr($3, 1, 300)), arr, ($5 == "" ? "null" : js(substr($5, 1, 300)))
+    }' "$TMPD/history.tsv"
+awk -F'\t' '
+    function js(s) { gsub(/\\/, "\\\\", s); gsub(/"/, "\\\"", s); gsub(/[\001-\037]/, "", s); return "\"" s "\"" }
+    NF >= 2 { printf "{\"type\":\"broken\",\"name\":%s,\"status\":%s}\n", js($1), js(substr($2, 1, 300)) }
+' "$TMPD/broken.tsv"
+
+# --- write state ----------------------------------------------------------------------------
+
+if [ $STATE_LOCK_OK = 1 ]; then
+    cat "$TMPD/state.pkgs" >>"$TMPD/state.new" 2>/dev/null
+    tmp=$(mktemp "$STATE_FILE.XXXXXX" 2>/dev/null) &&
+        { echo "# linux_update_tracker state v1"; cat "$TMPD/state.new" 2>/dev/null; } >"$tmp" &&
+        mv -f "$tmp" "$STATE_FILE"
+fi
+exit 0

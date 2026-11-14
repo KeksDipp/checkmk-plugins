@@ -1,0 +1,18 @@
+title: Linux Update Tracker: Failed package transactions
+agents: linux
+catalog: os/misc
+license: GPLv2
+distribution: https://github.com/KeksDipp/checkmk-plugins
+description:
+ Shows failed and aborted package transactions of the last 30 days from the
+ package manager history (APT history.log, DNF/YUM history), default {WARN}.
+ A failure is ignored when all its packages were handled by a later successful
+ transaction or none of them has a pending update anymore. A transaction still
+ in progress is not counted.
+
+ Also shows broken packages (half-installed or half-configured packages,
+ problems reported by {dnf check}), default {WARN}.
+
+discovery:
+ One service is created if the package manager history or the broken package
+ check is supported (APT, DNF, YUM - not Zypper).

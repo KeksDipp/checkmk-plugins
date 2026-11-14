@@ -1,0 +1,27 @@
+title: Linux Update Tracker: Pending updates
+agents: linux
+catalog: os/misc
+license: GPLv2
+distribution: https://github.com/KeksDipp/checkmk-plugins
+description:
+ Lists every package with a pending update: installed and candidate version,
+ repository, classification, advisory severity and age. Needs the agent plugin
+ {linux_update_tracker}. Supported package managers: APT, DNF, DNF5, YUM and
+ Zypper.
+
+ Each package is checked against age limits (default: {WARN} after 2 days,
+ {CRIT} after 7 days). The age counts from when the package first had an
+ update on this host (newer versions do not reset it), optionally from when the
+ current candidate version showed up or from the publish date of the advisory.
+ Age rules can set other limits for certain packages, e.g. security updates.
+
+ No updates are filtered by default. Held and phased packages, classifications,
+ package names and repositories can be filtered.
+
+ The service also goes {WARN} if the update search or the index refresh fails,
+ or if the last successful search or the package index is older than 2 days
+ ({CRIT} after 7 days). It is always {WARN} if the plugin cannot write its state
+ file, because the package ages would not be tracked then.
+
+discovery:
+ One service is created if the agent plugin output is present.

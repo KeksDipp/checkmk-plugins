@@ -1,0 +1,18 @@
+title: Linux Update Tracker: Pending reboot
+agents: linux
+catalog: os/misc
+license: GPLv2
+distribution: https://github.com/KeksDipp/checkmk-plugins
+description:
+ Shows whether the host needs a reboot after updates, and since when.
+ Detected via {/run/reboot-required}, a newer installed kernel than the running
+ one, core packages (kernel, glibc, systemd, ...) installed after the last boot
+ on RPM systems and {needrestart}. Inside containers the kernel is ignored.
+ Default: {WARN} after 1 day, {CRIT} after 3 days. With "No levels" the
+ service always stays {OK}.
+
+ Services still running old libraries are listed (needrestart,
+ dnf needs-restarting, zypper ps). By default they do not change the state.
+
+discovery:
+ One service is created if the agent plugin output is present.
