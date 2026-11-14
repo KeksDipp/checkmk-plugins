@@ -114,6 +114,26 @@ def _kb_tuple(value: object) -> tuple[str, ...]:
     return ()
 
 
+def _str_or_none(value: object) -> str | None:
+    return None if value is None else str(value)
+
+
+def _clean_meta(data: Mapping[str, Any]) -> dict[str, Any]:
+    meta = dict(data)
+    for key in ("error", "hresult", "source", "wu_start_type", "history_error", "plugin_version"):
+        meta[key] = _str_or_none(meta.get(key))
+    meta["search_ok"] = meta.get("search_ok") is True
+    return meta
+
+
+def _clean_reboot(data: Mapping[str, Any]) -> dict[str, Any]:
+    reboot = dict(data)
+    reboot["required"] = reboot.get("required") is True
+    sources = reboot.get("sources")
+    reboot["sources"] = [str(s) for s in sources if s] if isinstance(sources, list) else []
+    return reboot
+
+
 def parse_windows_update_tracker(string_table: StringTable) -> Section | None:
     section = Section()
     found_meta = False
@@ -124,9 +144,11 @@ def parse_windows_update_tracker(string_table: StringTable) -> Section | None:
             data = json.loads(line[0])
         except json.JSONDecodeError:
             continue
+        if not isinstance(data, dict):
+            continue
         kind = data.get("type")
         if kind == "meta":
-            section.meta = data
+            section.meta = _clean_meta(data)
             found_meta = True
         elif kind == "pending":
             section.pending.append(
@@ -144,7 +166,7 @@ def parse_windows_update_tracker(string_table: StringTable) -> Section | None:
                 )
             )
         elif kind == "reboot":
-            section.reboot = data
+            section.reboot = _clean_reboot(data)
         elif kind == "history":
             date = _int_or_none(data.get("date"))
             if date is None:

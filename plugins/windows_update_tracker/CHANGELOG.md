@@ -1,5 +1,9 @@
 # Changelog – windows_update_tracker
 
+## Unreleased
+
+- Malformed agent output no longer crashes the checks. Invalid lines are skipped.
+
 ## 1.0.0-beta.4 – 2026-11-13
 
 - All filters in one list *Filtered updates*. Existing rules are migrated.
