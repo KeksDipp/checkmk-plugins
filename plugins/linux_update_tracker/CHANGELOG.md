@@ -16,3 +16,6 @@
   detection of phased updates on Ubuntu
 - Phased updates (Ubuntu): only packages that apt really defers for this host count as phased
   (taken from an `apt-get -s dist-upgrade` simulation, not just from the rollout percentage)
+- DNF5: the publish date of an advisory keeps its time of day (was cut to the date)
+- YUM: failed/succeeded transactions list the updated packages (`Updated`/`Obsoleted` lines)
+- Agent config: blanks around the key (`REFRESH = always`) are accepted

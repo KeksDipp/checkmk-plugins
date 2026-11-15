@@ -37,6 +37,7 @@ LOCK_TIMEOUT=120
 # The config is parsed, never sourced: only known keys with valid values are taken.
 if [ -r "$CONFIG_FILE" ]; then
     while IFS='=' read -r key value; do
+        key=${key//[[:space:]]/}
         value=${value%%#*}
         value=${value//[[:space:]\"\']/}
         case "$key" in
@@ -267,7 +268,7 @@ rpm_name_from_nevra() { # stdin: <advisory> <type> <severity> <nevra> [issued]
         nevra = $4; sub(/\.[^.]+$/, "", nevra)          # strip .arch
         n = split(nevra, p, "-"); name = p[1]
         for (i = 2; i <= n - 2; i++) name = name "-" p[i]  # strip -version-release
-        print name "\t" $2 "\t" $3 "\t" $1 "\t" $5
+        print name "\t" $2 "\t" $3 "\t" $1 "\t" $5 (NF >= 6 ? " " $6 : "")
     }'
 }
 
@@ -639,7 +640,7 @@ history_rpm() {
             /^(Command Line|Description) *: / { cmd = $0; sub(/^[^:]*: */, "", cmd) }
             /^Packages [Aa]ltered:/ { inpk = 1; next }
             /^[A-Z][A-Za-z ]+:/ { inpk = 0 }
-            inpk && /^ +(Install|Upgrade|Downgrade|Reinstall|Erase|Remove|Removed|Obsoleting|Dep-Install) / {
+            inpk && /^ +(Install|Upgrade|Update|Updated|Downgrade|Reinstall|Erase|Remove|Removed|Obsoleting|Obsoleted|Dep-Install) / {
                 for (i = 2; i <= NF; i++) if ($i ~ /-[^-]+-[^-]+\.[^.]+$/) {
                     n = $i; sub(/\.[^.]+$/, "", n); k = split(n, p, "-"); name = p[1]
                     for (j = 2; j <= k - 2; j++) name = name "-" p[j]
