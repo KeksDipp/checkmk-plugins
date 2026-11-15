@@ -1,4 +1,3 @@
-# Python
 __pycache__/
 *.py[cod]
 .venv/
@@ -6,23 +5,12 @@ venv/
 .ruff_cache/
 .mypy_cache/
 .pytest_cache/
-
-# Build artifacts (MKPs are attached to GitHub Releases, not committed)
 *.mkp
 dist/
 build/
-
-# Editors / OS
 .vscode/
 .idea/
 *.swp
 .DS_Store
-
-# AI assistant files (never publish)
-CLAUDE.md
-CLAUDE.local.md
-.claude/
-
-# Local test helpers (not published)
 tests/
 plugins/*/tests/

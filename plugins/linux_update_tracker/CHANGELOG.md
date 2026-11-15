@@ -1,6 +1,6 @@
 # Changelog – linux_update_tracker
 
-## 1.0.0-beta.1 – unreleased
+## 1.0.0-beta.1 – 2026-11-15
 
 - First release: services *Linux Updates pending*, *Linux Update reboot* and
   *Linux Update failures* for APT, DNF, DNF5, YUM and Zypper
