@@ -14,3 +14,5 @@
   on a tie the oldest advisory
 - The agent no longer needs `xargs` or `find` (missing in minimal images); this also fixes the
   detection of phased updates on Ubuntu
+- Phased updates (Ubuntu): only packages that apt really defers for this host count as phased
+  (taken from an `apt-get -s dist-upgrade` simulation, not just from the rollout percentage)

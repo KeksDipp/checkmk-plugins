@@ -229,7 +229,19 @@ search_apt() {
             /^[^ ].*:$/ { pkg = substr($0, 1, length($0) - 1); cand = ""; next }
             /^  Candidate: / { cand = $2; next }
             /\(phased [0-9]+%\)/ { v = ($1 == "***") ? $2 : $1; if (v == cand) print pkg }
-        ' >"$TMPD/apt.phased"
+        ' >"$TMPD/apt.rollout"
+        # only what apt really defers for this host (depends on machine-id); policy can't tell
+        : >"$TMPD/apt.phased"
+        if [ -s "$TMPD/apt.rollout" ] &&
+            run apt-get -s -q dist-upgrade >"$TMPD/apt.sim" 2>/dev/null; then
+            awk -v roll="$TMPD/apt.rollout" '
+                BEGIN { while ((getline l < roll) > 0) R[l] = 1 }
+                /deferred due to phasing:$/ { d = 1; next }
+                d && /^ / { for (i = 1; i <= NF; i++) { n = $i; sub(/:.*/, "", n)
+                        if ($i in R) print $i; else if (n in R) print n }; next }
+                { d = 0 }
+            ' "$TMPD/apt.sim" | sort -u >"$TMPD/apt.phased"
+        fi
     fi
     awk -v hold="$TMPD/apt.hold" -v phased="$TMPD/apt.phased" '
         BEGIN {
