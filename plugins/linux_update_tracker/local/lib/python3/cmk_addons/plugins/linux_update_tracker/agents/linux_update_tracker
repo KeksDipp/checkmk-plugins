@@ -52,6 +52,15 @@ TMPD=$(mktemp -d "${TMPDIR:-/tmp}/linux_update_tracker.XXXXXX") || exit 1
 trap 'rm -rf "$TMPD"' EXIT
 
 run() { timeout --kill-after=10 "$CMD_TIMEOUT" "$@"; }
+# run_list FILE CMD...: CMD with the lines of FILE as extra arguments, 200 per call
+# (no xargs: it cannot call the run() function and is missing in minimal images)
+run_list() {
+    local file=$1 i
+    shift
+    local -a items
+    mapfile -t items <"$file"
+    for ((i = 0; i < ${#items[@]}; i += 200)); do run "$@" "${items[@]:i:200}"; done
+}
 mtime() { stat -c %Y "$@" 2>/dev/null; }
 max_of() { sort -n | tail -1; }
 
@@ -216,7 +225,7 @@ search_apt() {
     awk '/\[upgradable from: /' "$TMPD/apt.list" | cut -d/ -f1 | sort -u >"$TMPD/apt.names"
     if [ -s "$TMPD/apt.names" ]; then
         # phased updates (Ubuntu): candidate version line carries "(phased NN%)"
-        xargs -r run apt-cache policy <"$TMPD/apt.names" 2>/dev/null | awk '
+        run_list "$TMPD/apt.names" apt-cache policy 2>/dev/null | awk '
             /^[^ ].*:$/ { pkg = substr($0, 1, length($0) - 1); cand = ""; next }
             /^  Candidate: / { cand = $2; next }
             /\(phased [0-9]+%\)/ { v = ($1 == "***") ? $2 : $1; if (v == cand) print pkg }
@@ -308,7 +317,9 @@ merge_rpm() {
             while ((getline l < adv) > 0) {
                 split(l, a, "\t"); n = a[1]
                 r = crank(a[2]) * 10 + srank(a[3])
-                if (!(n in R) || r > R[n]) { R[n] = r; C[n] = a[2]; S[n] = a[3]; A[n] = a[4]; D[n] = a[5] }
+                # worst classification/severity wins; on a tie the oldest advisory (vulnerable since)
+                older = (n in R) && r == R[n] && a[5] != "" && (D[n] == "" || a[5] + 0 < D[n] + 0)
+                if (!(n in R) || r > R[n] || older) { R[n] = r; C[n] = a[2]; S[n] = a[3]; A[n] = a[4]; D[n] = a[5] }
             }
         }
         NF >= 4 {
@@ -398,13 +409,16 @@ search_zypper() {
     ' >"$TMPD/zy.patches"
     : >"$TMPD/adv.tsv"
     if [ -s "$TMPD/zy.patches" ]; then
-        cut -f1 "$TMPD/zy.patches" | xargs -r run zypper -n -q --no-refresh info -t patch 2>/dev/null |
+        cut -f1 "$TMPD/zy.patches" >"$TMPD/zy.names"
+        run_list "$TMPD/zy.names" zypper -n -q --no-refresh info -t patch 2>/dev/null |
             awk -v pf="$TMPD/zy.patches" '
             BEGIN { while ((getline l < pf) > 0) { split(l, a, "\t"); C[a[1]] = a[2]; S[a[1]] = a[3]; D[a[1]] = a[4] } }
             /^Name *: / { patch = $3; inconf = 0; next }
             /^[A-Z][A-Za-z ]* *: / { inconf = ($1 == "Conflicts"); next }
             inconf && /^    [^ ]/ && patch in C {
-                n = $1; sub(/\.[^.]+$/, "", n)
+                # "curl.x86_64 < 8.14.1-..." or "curl-fish-completion < ..." (no arch)
+                n = $1; if (n ~ /:/) next
+                sub(/\.(x86_64|aarch64|noarch|i[3-6]86|ppc64le|ppc64|s390x|armv[67]hl|riscv64)$/, "", n)
                 c = C[patch]
                 if (c == "security") t = "security"
                 else if (c == "recommended") t = "bugfix"
