@@ -1,0 +1,20 @@
+title: Sophos Firewall: High availability
+agents: snmp
+catalog: hw/network/sophos
+license: GPLv2
+distribution: https://github.com/KeksDipp/checkmk-plugins
+description:
+ HA state of a Sophos Firewall cluster: state of this device and of the peer,
+ the active node (primary), HA mode and HA link.
+
+ {OK}: both nodes are primary/auxiliary. {CRIT}: a node is faulty,
+ standalone or not applicable, both nodes report the same role, there is no
+ primary, or HA has been disabled. {WARN}: a node reports "ready"
+ (configurable).
+
+ The serial number and role of the monitored address are stored at discovery.
+ If they change, a failover has happened and the service goes {WARN}
+ (configurable) until it is rediscovered.
+
+discovery:
+ One service is created if HA is enabled.

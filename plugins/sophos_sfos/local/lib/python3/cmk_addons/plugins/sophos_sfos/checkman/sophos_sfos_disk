@@ -1,0 +1,12 @@
+title: Sophos Firewall: Disk usage
+agents: snmp
+catalog: hw/network/sophos
+license: GPLv2
+distribution: https://github.com/KeksDipp/checkmk-plugins
+description:
+ Usage of the SFOS data partition in percent (sfosDiskPercentUsage).
+ Default levels: {WARN} at 80%, {CRIT} at 90%. Configurable via the rule
+ "Sophos Firewall disk usage".
+
+discovery:
+ One service is created if the device reports its disk usage.

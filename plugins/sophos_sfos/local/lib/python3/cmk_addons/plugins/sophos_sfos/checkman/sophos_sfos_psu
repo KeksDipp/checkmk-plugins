@@ -1,0 +1,14 @@
+title: Sophos Firewall: Power supply
+agents: snmp
+catalog: hw/network/sophos
+license: GPLv2
+distribution: https://github.com/KeksDipp/checkmk-plugins
+item:
+ The power supply index.
+
+description:
+ Status of a power supply (sfosXGHardware, SFOS 22.0 and later, appliances
+ with redundant power supplies). Up: {OK}, down: {CRIT}.
+
+discovery:
+ One service is created per power supply.

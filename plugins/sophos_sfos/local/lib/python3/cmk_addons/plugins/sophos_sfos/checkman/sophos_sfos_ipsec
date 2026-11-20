@@ -1,0 +1,22 @@
+title: Sophos Firewall: IPsec connections
+agents: snmp
+catalog: hw/network/sophos
+license: GPLv2
+distribution: https://github.com/KeksDipp/checkmk-plugins
+item:
+ The name of the IPsec connection.
+
+description:
+ Status of an IPsec connection (sfosIPSecVpnTunnelTable) and the number of
+ active tunnels (child SAs).
+
+ Activated and connected: {OK}. Activated but down: {CRIT}. Partially active:
+ {WARN}. Deactivated by the administrator: {OK}. All states and optional lower
+ levels for the active tunnels are configurable via the rule
+ "Sophos Firewall IPsec connections".
+
+ The table has no traffic counters. Throughput of route-based VPNs is
+ available on the xfrm interfaces in the interface check.
+
+discovery:
+ One service is created for each IPsec connection.

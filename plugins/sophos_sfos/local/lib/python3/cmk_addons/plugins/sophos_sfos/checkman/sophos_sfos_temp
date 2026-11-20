@@ -1,0 +1,15 @@
+title: Sophos Firewall: Temperature
+agents: snmp
+catalog: hw/network/sophos
+license: GPLv2
+distribution: https://github.com/KeksDipp/checkmk-plugins
+item:
+ {CPU} or {NPU}.
+
+description:
+ CPU and NPU temperature (sfosXGHardware, SFOS 22.0 and later).
+ Default levels: {WARN} at 75 °C, {CRIT} at 85 °C. Configurable via the
+ built-in rule "Temperature".
+
+discovery:
+ One service is created per sensor that reports a value.

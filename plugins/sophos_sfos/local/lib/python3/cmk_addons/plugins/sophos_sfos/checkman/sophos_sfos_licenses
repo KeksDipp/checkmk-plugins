@@ -1,0 +1,19 @@
+title: Sophos Firewall: Licenses
+agents: snmp
+catalog: hw/network/sophos
+license: GPLv2
+distribution: https://github.com/KeksDipp/checkmk-plugins
+description:
+ Subscription status and expiry date of all license modules in one service
+ (sfosXGLicenseDetails). The worst module determines the state; modules with a
+ problem are named in the summary, the next expiring module and its remaining
+ time are always shown.
+ Expired: {CRIT}. No longer subscribed, deactivated or no longer reported: {WARN}.
+ Default levels for the remaining time: {WARN} below 30 days, {CRIT} below 14 days.
+ Modules with an expiry date in the year 2999 or later (e.g. Base Firewall) are
+ perpetual. Single modules can be ignored. Configurable via the rule
+ "Sophos Firewall licenses".
+
+discovery:
+ One service is created if at least one module is subscribed or in evaluation.
+ These modules are stored with the service; rediscover after license changes.

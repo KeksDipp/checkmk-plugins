@@ -1,0 +1,15 @@
+title: Sophos Firewall: Memory
+agents: snmp
+catalog: hw/network/sophos
+license: GPLv2
+distribution: https://github.com/KeksDipp/checkmk-plugins
+description:
+ RAM and swap usage in percent as reported by SFOS (sfosMemoryPercentUsage,
+ sfosSwapPercentUsage). Unlike HOST-RESOURCES-MIB these values do not include
+ cache and buffers.
+
+ Default levels: RAM {WARN} at 80%, {CRIT} at 90%; swap {WARN} at 50%,
+ {CRIT} at 75%. Configurable via the rule "Sophos Firewall memory".
+
+discovery:
+ One service is created if the device reports its memory usage.

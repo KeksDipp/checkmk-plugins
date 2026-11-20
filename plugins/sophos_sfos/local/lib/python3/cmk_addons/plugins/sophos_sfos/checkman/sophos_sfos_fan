@@ -1,0 +1,15 @@
+title: Sophos Firewall: Fan speed
+agents: snmp
+catalog: hw/network/sophos
+license: GPLv2
+distribution: https://github.com/KeksDipp/checkmk-plugins
+item:
+ The fan index.
+
+description:
+ Fan speed in RPM (sfosXGHardware, SFOS 22.0 and later). Default levels:
+ {WARN} below 2000 RPM, {CRIT} below 1000 RPM. Configurable via the built-in
+ rule "FAN speed of hardware devices".
+
+discovery:
+ One service is created per fan.

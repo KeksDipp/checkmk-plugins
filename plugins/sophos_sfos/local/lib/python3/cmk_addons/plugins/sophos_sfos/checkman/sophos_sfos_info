@@ -1,0 +1,15 @@
+title: Sophos Firewall: System information
+agents: snmp
+catalog: hw/network/sophos
+license: GPLv2
+distribution: https://github.com/KeksDipp/checkmk-plugins
+description:
+ Shows model, firmware version and serial number of a Sophos Firewall (SFOS),
+ plus the IPS pattern and web category versions. The number of live users and
+ the HTTP hit rate are recorded as metrics. The service is always {OK}.
+
+ CPU utilization is not part of the SFOS MIB; it is covered by the built-in
+ check {hr_cpu} (HOST-RESOURCES-MIB).
+
+discovery:
+ One service is created for each Sophos Firewall (sysObjectID .1.3.6.1.4.1.2604.5).

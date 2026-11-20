@@ -1,0 +1,16 @@
+title: Sophos Firewall: System services
+agents: snmp
+catalog: hw/network/sophos
+license: GPLv2
+distribution: https://github.com/KeksDipp/checkmk-plugins
+description:
+ Status of the 21 SFOS system services (sfosXGServiceStatus) in one service.
+ Every service that was running at discovery has to stay running; otherwise
+ the service goes {CRIT} (configurable). Services that were not running at
+ discovery are only listed. Single services can be ignored via the rule
+ "Sophos Firewall services".
+
+ Rediscover the service after enabling or disabling features on the firewall.
+
+discovery:
+ One service is created; the list of running services is stored with it.

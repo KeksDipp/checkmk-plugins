@@ -1,0 +1,13 @@
+title: Sophos Firewall: PoE
+agents: snmp
+catalog: hw/network/sophos
+license: GPLv2
+distribution: https://github.com/KeksDipp/checkmk-plugins
+description:
+ PoE ports of the appliance (sfosXGHardware, SFOS 22.0 and later): enabled
+ ports, power draw per port against its limit, voltage and current. The total
+ power draw is recorded as metric. Disabled ports are not an error. A port at
+ its power limit is {WARN}.
+
+discovery:
+ One service is created if the device has PoE ports.
