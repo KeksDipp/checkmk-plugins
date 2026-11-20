@@ -8,9 +8,9 @@ and small-business monitoring.
 
 | Plugin | Type | Description | Checkmk | Latest release |
 |--------|------|-------------|---------|----------------|
-| [windows_update_tracker](plugins/windows_update_tracker/) | Agent plugin + checks + bakery | Pending Windows updates with per-update age rules, pending reboot, failed installations, Defender filter | 2.5 (2.4 untested) | [1.0.0-beta.4](https://github.com/KeksDipp/checkmk-plugins/releases/tag/windows_update_tracker-v1.0.0-beta.4) |
-| [linux_update_tracker](plugins/linux_update_tracker/) | Agent plugin + checks + bakery | Pending package updates (APT, DNF, YUM, Zypper) with per-package age rules, pending reboot, failed transactions | 2.5 (2.4 untested) | [1.0.0-beta.1](https://github.com/KeksDipp/checkmk-plugins/releases/tag/linux_update_tracker-v1.0.0-beta.1) |
-| [sophos_sfos](plugins/sophos_sfos/) | SNMP checks | Sophos Firewall (SFOS): HA cluster and active node, IPsec connections, licenses, system services, memory/disk, hardware sensors, PoE | 2.5 (2.4 untested) | [1.0.0](https://github.com/KeksDipp/checkmk-plugins/releases/tag/sophos_sfos-v1.0.0) |
+| [windows_update_tracker](plugins/windows_update_tracker/) | Agent plugin + checks + bakery | Pending Windows updates with per-update age rules, pending reboot, failed installations, Defender filter | 2.5 | [1.0.0-beta.4](https://github.com/KeksDipp/checkmk-plugins/releases/tag/windows_update_tracker-v1.0.0-beta.4) |
+| [linux_update_tracker](plugins/linux_update_tracker/) | Agent plugin + checks + bakery | Pending package updates (APT, DNF, YUM, Zypper) with per-package age rules, pending reboot, failed transactions | 2.5 | [1.0.0-beta.1](https://github.com/KeksDipp/checkmk-plugins/releases/tag/linux_update_tracker-v1.0.0-beta.1) |
+| [sophos_sfos](plugins/sophos_sfos/) | SNMP checks | Sophos Firewall (SFOS): HA cluster and active node, IPsec connections, licenses, system services, memory/disk, hardware sensors, PoE | 2.5 | [1.0.0](https://github.com/KeksDipp/checkmk-plugins/releases/tag/sophos_sfos-v1.0.0) |
 
 Each plugin lives in its own directory under [`plugins/`](plugins/) with a dedicated README and
 changelog.
@@ -18,8 +18,8 @@ changelog.
 ## Compatibility
 
 All plugins target the current plugin APIs (`cmk.agent_based.v2`, `cmk.rulesets.v1`,
-`cmk.graphing.v1`, `cmk.server_side_calls.v1`) and are tested on **Checkmk 2.4** and/or
-**Checkmk 2.5**. The supported versions are listed per plugin. Legacy (pre-2.3) APIs are not
+`cmk.graphing.v1`, `cmk.server_side_calls.v1`) and are tested on **Checkmk 2.5**.
+The supported versions are listed per plugin. Legacy (pre-2.3) APIs are not
 supported.
 
 ## Installation

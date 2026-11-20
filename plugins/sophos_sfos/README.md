@@ -4,7 +4,7 @@ SNMP checks for Sophos Firewall OS (XGS, XG, virtual and cloud appliances), incl
 clusters. All data comes from the vendor MIB `SFOS-FIREWALL-MIB` (`.1.3.6.1.4.1.2604.5.1`);
 no special agent or API access is needed.
 
-- **Checkmk:** 2.5 (2.4 untested)
+- **Checkmk:** 2.5
 - **SFOS:** tested against SFOS 22.0 MR-3 (XGS 138, Active-Passive cluster). Hardware sensors
   need SFOS 22.0 GA build 411 or later.
 

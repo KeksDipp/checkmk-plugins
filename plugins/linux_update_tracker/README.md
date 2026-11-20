@@ -6,7 +6,7 @@ Zypper. It is the Linux counterpart of the [Windows Update Tracker](../windows_u
 
 | | |
 |---|---|
-| **Checkmk** | 2.5, 2.4 untested (all editions; Agent Bakery support for commercial editions) |
+| **Checkmk** | 2.5 (all editions; Agent Bakery support for commercial editions) |
 | **Agent** | Linux, bash 4+ |
 | **License** | GPL-2.0 |
 
