@@ -30,7 +30,7 @@
 #>
 
 $ErrorActionPreference = 'Stop'
-$PluginVersion = '1.0.0-beta.3'
+$PluginVersion = '1.0.0'
 $HistoryDays = 30
 $HistoryMaxEntries = 300
 
@@ -105,9 +105,21 @@ function Get-KbList {
     return , @($kbs | Select-Object -Unique)
 }
 
+function Test-ReparsePoint {
+    # True if the path is a symlink, junction or other reparse point. The state is never
+    # read or written through one, so a redirected path cannot make SYSTEM touch other files.
+    param([string]$Path)
+    try {
+        $item = Get-Item -LiteralPath $Path -Force -ErrorAction Stop
+        return [bool]($item.Attributes -band [System.IO.FileAttributes]::ReparsePoint)
+    } catch {
+        return $false
+    }
+}
+
 function Read-State {
     $state = @{ first_seen = @{}; reboot_since = $null; last_success = $null; last_pending = @() }
-    if (Test-Path -LiteralPath $StateFile) {
+    if ((Test-Path -LiteralPath $StateFile) -and -not (Test-ReparsePoint $StateDir) -and -not (Test-ReparsePoint $StateFile)) {
         try {
             $raw = Get-Content -LiteralPath $StateFile -Raw | ConvertFrom-Json
             if ($raw.first_seen) {
@@ -123,12 +135,22 @@ function Read-State {
 
 function Write-State {
     param([hashtable]$State)
+    $tmp = $null
     try {
-        if (-not (Test-Path -LiteralPath $StateDir)) { New-Item -ItemType Directory -Path $StateDir -Force | Out-Null }
-        $tmp = "$StateFile.tmp"
-        ConvertTo-Json -InputObject $State -Depth 6 -Compress | Set-Content -LiteralPath $tmp -Encoding UTF8
+        if (-not (Test-Path -LiteralPath $StateDir)) { [void][System.IO.Directory]::CreateDirectory($StateDir) }
+        if ((Test-ReparsePoint $StateDir) -or (Test-ReparsePoint $StateFile)) { return }
+        # Random temp name, created exclusively: nothing can be planted there in advance
+        $tmp = '{0}.{1}.tmp' -f $StateFile, [guid]::NewGuid().ToString('N')
+        $json = ConvertTo-Json -InputObject $State -Depth 6 -Compress
+        $bytes = (New-Object System.Text.UTF8Encoding $false).GetBytes($json)
+        $stream = New-Object System.IO.FileStream($tmp, [System.IO.FileMode]::CreateNew, [System.IO.FileAccess]::Write)
+        try { $stream.Write($bytes, 0, $bytes.Length) } finally { $stream.Dispose() }
         Move-Item -LiteralPath $tmp -Destination $StateFile -Force
-    } catch { }
+        $tmp = $null
+    } catch {
+    } finally {
+        if ($tmp -and (Test-Path -LiteralPath $tmp)) { Remove-Item -LiteralPath $tmp -Force -ErrorAction SilentlyContinue }
+    }
 }
 
 function Get-UpdateSource {

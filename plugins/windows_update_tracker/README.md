@@ -5,7 +5,7 @@ pending and which installations failed.
 
 | | |
 |---|---|
-| **Checkmk** | 2.5, 2.4 untested (all editions; Agent Bakery support for commercial editions) |
+| **Checkmk** | 2.5 (all editions; Agent Bakery support for commercial editions) |
 | **Agent** | Windows, Windows PowerShell 5.1 |
 | **License** | GPL-2.0 |
 
@@ -77,7 +77,11 @@ interval (default 4 h) and timeout (default 600 s), then bake and deploy the age
    Download it in Checkmk 2.5 under *Setup → Agents → Other operating systems* (section
    "Windows_update_tracker (locally installed …)") or take it from this repository / the release
    assets. (*Windows files* only lists the files shipped with Checkmk itself, never locally
-   installed ones – in 2.4 the file is only available from the repository.)
+   installed ones.)
+
+   Copy it from an **elevated (administrator) PowerShell**. Never grant normal users write
+   access to the plugins folder to make copying easier: the agent runs every plugin there as
+   SYSTEM, so write access means a local privilege escalation.
 2. Make the plugin run **asynchronously** – a Windows Update search can take several minutes.
    Add to `C:\ProgramData\checkmk\agent\check_mk.user.yml`:
 
@@ -104,6 +108,13 @@ To test the plugin by hand, run it in an elevated PowerShell:
 ```powershell
 powershell.exe -NoProfile -ExecutionPolicy Bypass -File "C:\ProgramData\checkmk\agent\plugins\windows_update_tracker.ps1"
 ```
+
+### Updating from a beta
+
+The 1.0.0 checks work with the agent plugin of 1.0.0-beta.3 and later, so you don't have to
+replace the PowerShell script on every host at once. The new script reads the existing state
+file, first-seen timestamps are kept. Agent plugins from beta.1/beta.2 still work, but don't
+detect optional updates.
 
 ## Notes
 

@@ -8,7 +8,7 @@ and small-business monitoring.
 
 | Plugin | Type | Description | Checkmk | Latest release |
 |--------|------|-------------|---------|----------------|
-| [windows_update_tracker](plugins/windows_update_tracker/) | Agent plugin + checks + bakery | Pending Windows updates with per-update age rules, pending reboot, failed installations, Defender filter | 2.5 | [1.0.0-beta.4](https://github.com/KeksDipp/checkmk-plugins/releases/tag/windows_update_tracker-v1.0.0-beta.4) |
+| [windows_update_tracker](plugins/windows_update_tracker/) | Agent plugin + checks + bakery | Pending Windows updates with per-update age rules, pending reboot, failed installations, Defender filter | 2.5 | [1.0.0](https://github.com/KeksDipp/checkmk-plugins/releases/tag/windows_update_tracker-v1.0.0) |
 | [linux_update_tracker](plugins/linux_update_tracker/) | Agent plugin + checks + bakery | Pending package updates (APT, DNF, YUM, Zypper) with per-package age rules, pending reboot, failed transactions | 2.5 | [1.0.0-beta.1](https://github.com/KeksDipp/checkmk-plugins/releases/tag/linux_update_tracker-v1.0.0-beta.1) |
 | [sophos_sfos](plugins/sophos_sfos/) | SNMP checks | Sophos Firewall (SFOS): HA cluster and active node, IPsec connections, licenses, system services, memory/disk, hardware sensors, PoE | 2.5 | [1.0.0](https://github.com/KeksDipp/checkmk-plugins/releases/tag/sophos_sfos-v1.0.0) |
 

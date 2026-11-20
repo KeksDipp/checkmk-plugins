@@ -1,8 +1,14 @@
 # Changelog – windows_update_tracker
 
-## Unreleased
+## 1.0.0 – 2026-11-20
+
+First stable release.
 
 - Malformed agent output no longer crashes the checks. Invalid lines are skipped.
+- Agent plugin 1.0.0: the state file is never read or written through a symlink or junction,
+  and the temporary file gets a random name that is created exclusively.
+- The checks stay compatible with the agent plugin of 1.0.0-beta.3; replacing the script on
+  the hosts is recommended but not required.
 
 ## 1.0.0-beta.4 – 2026-11-13
 
